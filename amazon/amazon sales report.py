@@ -79,14 +79,15 @@ try:
             
             cursor.execute(create_dim_review)
             
-            create_fact_table = '''
-            CREATE TABLE IF NOT EXISTS fact_table (
-            "discounted_price (PLN)" FLOAT,
-            "actual_price (PLN)" FLOAT,
-            discount_percentage TEXT,
+            create_fact_sale = '''
+            CREATE TABLE IF NOT EXISTS fact_sale (
+            sale_key SERIAL PRIMARY KEY,
             product_key INT REFERENCES dim_product (product_key),
             user_key INT REFERENCES dim_user (user_key),
-            review_key INT REFERENCES dim_review (review_key)
+            review_key INT REFERENCES dim_review (review_key),
+            "actual_price (PLN)" FLOAT,
+            "discounted_price (PLN)" FLOAT,
+            discount_percentage TEXT
             )'''
             
             cursor.execute(create_fact_table)
@@ -104,7 +105,7 @@ finally:
 
 # Defining the function that will perform the INSERT action when called by the ETL stages.
 
-def insert(x, y):
+def insert(insert_query, dataset):
     connection = None
     db_user = os.getenv('DB_USER')
     db_password = os.getenv('DB_PASSWORD')
@@ -119,7 +120,7 @@ def insert(x, y):
 
             with connection.cursor() as cursor:
 
-                psycopg2.extras.execute_batch(cursor, x, y)
+                psycopg2.extras.execute_batch(cursor, insert_query, dataset)
 
     except Exception as error:
         print(error)
@@ -134,11 +135,10 @@ def extract_transform():
     connection = None
     
     try:
-        engine = create_engine('postgresql:///Source')
         engine2 = create_engine('postgresql:///Destination')
         
-        table_name = pd.read_sql('amazon_sales_report', engine) 
-        table_name.to_sql('stg_amazon_sales_report', engine2, index=False, if_exists='replace')
+        source_table = pd.read_excel('amazon.xlsx') 
+        source_table.to_sql('stg_amazon_sales_report', engine, index=False, if_exists='replace')
     
         # Addition of surrogate key columns to staging
         db_user = os.getenv('DB_USER')
@@ -304,27 +304,27 @@ def transform_load_fact_table():
     fact = dg[['discounted_price', 'actual_price', 'discount_percentage', 
                'product_key', 'user_key', 'review_key']].copy()
 
-    fact['discounted_price'] = fact['discounted_price'].str.replace('PLN ', '')
+    fact['discounted_price'] = fact['discounted_price'].str.replace('₹', '')
     fact['discounted_price'] = fact['discounted_price'].str.replace(',', '').astype(float)
-    fact['actual_price'] = fact['actual_price'].str.replace('PLN ', '')
+    fact['actual_price'] = fact['actual_price'].str.replace('₹', '')
     fact['actual_price'] = fact['actual_price'].str.replace(',', '').astype(float)
     fact = fact.to_dict('records')
 
-    insert_query = '''INSERT into amazon.fact_table (
-    "discounted_price (PLN)",
-    "actual_price (PLN)",
-    discount_percentage,
+    insert_query = '''INSERT into amazon.fact_sale (
     product_key,
     user_key,
-    review_key
+    review_key, 
+    "actual_price (PLN)",
+    "discounted_price (PLN)",
+    discount_percentage
     ) 
     VALUES (
-    %(discounted_price)s,
-    %(actual_price)s,
-    %(discount_percentage)s,
     %(product_key)s,
     %(user_key)s,
-    %(review_key)s
+    %(review_key)s,
+    %(actual_price)s,
+    %(discounted_price)s,
+    %(discount_percentage)s
     )'''
 
     insert(insert_query, fact)
