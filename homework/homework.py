@@ -5,6 +5,7 @@
 # - some of the data are in the form of dictionaries which cannot be loaded in its present form to a Postgres database.
 # - some of the data are needed in a transformed form for 1:1 comparison with dimension tables later.
 
+
 import requests
 import pandas as pd
 import os
