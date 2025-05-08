@@ -5,9 +5,6 @@
 # - some of the data are in the form of dictionaries which cannot be loaded in its present form to a Postgres database.
 # - some of the data are needed in a transformed form for 1:1 comparison with dimension tables later.
 
-# In[1]:
-
-
 import requests
 import pandas as pd
 import os
@@ -15,19 +12,12 @@ from sqlalchemy import create_engine
 import psycopg2
 from dotenv import load_dotenv
 
-
-# In[2]:
-
-
 load_dotenv()
-
-
-# In[3]:
-
 
 prd_url = 'https://fakestoreapi.com/products'
 sale_url = 'https://fakestoreapi.com/carts'
 user_url = 'https://fakestoreapi.com/users'
+
 
 def prd_scraper(prd_url):
     try:
@@ -41,8 +31,9 @@ def prd_scraper(prd_url):
         return print('Product data successfully extracted and loaded to staging')
         
     except Exception as error:
-        print (error)
-        
+        print(error)
+
+
 def sale_scraper(sale_url):
     try:
         response = requests.get(sale_url).json()
@@ -64,8 +55,9 @@ def sale_scraper(sale_url):
         return print('Sales data successfully extracted and loaded to staging')
         
     except Exception as error:
-        print (error)
-        
+        print(error)
+
+
 def user_scraper(user_url):
     try:
         response = requests.get(user_url).json()
@@ -85,13 +77,10 @@ def user_scraper(user_url):
         return print('User data successfully extracted and loaded to staging')
     
     except Exception as error:
-        print (error)
-
-
-# In[8]:
-
+        print(error)
 
 # Creating a combined staging table from all 3 data sources
+
 
 connection = None
 db_user = os.getenv('DB_USER')
@@ -100,12 +89,12 @@ db_password = os.getenv('DB_PASSWORD')
 try:
     
     with psycopg2.connect(
-        host = 'localhost',
-        dbname = 'Destination',
-        user = db_user,
-        password = db_password,
-        port = 5432
-        ) as connection:
+            host='localhost',
+            dbname='Destination',
+            user=db_user,
+            password=db_password,
+            port=5432
+            ) as connection:
     
         with connection.cursor() as cursor:
             
@@ -140,10 +129,6 @@ finally:
     if connection is not None:
         connection.close()
 
-
-# In[9]:
-
-
 # Creating the target tables
 
 connection = None
@@ -153,13 +138,13 @@ db_password = os.getenv('DB_PASSWORD')
 try:
     
     with psycopg2.connect(
-        host = 'localhost',
-        dbname = 'Destination',
-        user = db_user,
-        password = db_password,
-        port = 5432,
-        options = '-c search_path=homework'
-        ) as connection:
+            host='localhost',
+            dbname='Destination',
+            user=db_user,
+            password=db_password,
+            port=5432,
+            options='-c search_path=homework'
+            ) as connection:
     
         with connection.cursor() as cursor:
 
@@ -236,11 +221,8 @@ finally:
     if connection is not None:
         connection.close()
 
-
-# In[10]:
-
-
 # Defining the function that will perform the INSERT action when called by the ETL stages.
+
 
 def insert(insert_query, dataset):
     connection = None
@@ -249,13 +231,13 @@ def insert(insert_query, dataset):
     
     try:
         with psycopg2.connect(
-            host = 'localhost',
-            dbname = 'Destination',
-            user = db_user,
-            password = db_password,
-            port = 5432,
-            options = '-c search_path=homework'
-            ) as connection:
+                host='localhost',
+                dbname='Destination',
+                user=db_user,
+                password=db_password,
+                port=5432,
+                options='-c search_path=homework'
+                ) as connection:
 
             with connection.cursor() as cursor:
 
@@ -269,7 +251,8 @@ def insert(insert_query, dataset):
             connection.close()
 
 # Defining the functions that extracts each table, transforms, and loads to target
-        
+
+
 def transform_load_dim_product():
     try:
 
@@ -302,8 +285,9 @@ def transform_load_dim_product():
         return print('dim_product loaded successfully')
     
     except Exception as error:
-        print (error)
-        
+        print(error)
+
+
 def transform_load_dim_user():
     try:
 
@@ -342,8 +326,9 @@ def transform_load_dim_user():
         return print('dim_user loaded successfully')
     
     except Exception as error:
-        print (error)
-        
+        print(error)
+
+
 def transform_load_dim_address():
     try:
 
@@ -380,8 +365,9 @@ def transform_load_dim_address():
         return print('dim_address loaded successfully')
     
     except Exception as error:
-        print (error)
-        
+        print(error)
+
+
 def transform_load_dim_date():
     try:
 
@@ -408,9 +394,10 @@ def transform_load_dim_date():
         return print('dim_date loaded successfully')
     
     except Exception as error:
-        print (error)
+        print(error)
         
 # Defining the function that loads the surrogate keys of each dimension table to staging
+
 
 def load_surr_keys():
     connection = None
@@ -420,11 +407,11 @@ def load_surr_keys():
     try:
         
         with psycopg2.connect(
-            host = 'localhost',
-            dbname = 'Destination',
-            user = db_user,
-            password = db_password,
-            port = 5432) as connection:
+                host='localhost',
+                dbname='Destination',
+                user=db_user,
+                password=db_password,
+                port=5432) as connection:
 
             with connection.cursor() as cursor:
                 
@@ -453,6 +440,7 @@ def load_surr_keys():
 
 # Finally, defining the function that transforms and loads the fact data together with all 
 # surrogate keys to the fact table.
+
 
 def transform_load_fact_table():
     try:
@@ -490,65 +478,23 @@ def transform_load_fact_table():
         return print('fact_table loaded successfully')
     
     except Exception as error:
-        print (error)
-
-
-# In[5]:
+        print(error)
 
 
 prd_scraper(prd_url)
 
-
-# In[6]:
-
-
 sale_scraper(sale_url)
-
-
-# In[7]:
-
 
 user_scraper(user_url)
 
-
-# In[11]:
-
-
 transform_load_dim_product()
-
-
-# In[12]:
-
 
 transform_load_dim_user()
 
-
-# In[13]:
-
-
 transform_load_dim_address()
-
-
-# In[14]:
-
 
 transform_load_dim_date()
 
-
-# In[15]:
-
-
 load_surr_keys()
 
-
-# In[16]:
-
-
 transform_load_fact_table()
-
-
-# In[ ]:
-
-
-
-
