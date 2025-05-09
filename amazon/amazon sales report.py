@@ -219,7 +219,7 @@ def load_dim_user():
 def load_dim_review():
     engine = create_engine('postgresql:///Destination')
 
-    drr = pd.read_sql('stg_ebay_sales_report', engine)
+    drr = pd.read_sql('stg_amazon_sales_report', engine)
     review = drr[['review_id', 'review_title']].copy()
     review = review.rename(columns={'review_title': 'review_content'})
     review = review.drop_duplicates(subset=['review_id'], keep='first')
