@@ -57,7 +57,6 @@ try:
             CREATE TABLE IF NOT EXISTS dim_review (
             review_key SERIAL PRIMARY KEY,
             review_id TEXT,
-            review_title TEXT,
             review_content TEXT
             )'''
 
@@ -119,7 +118,14 @@ def extract_transform():
         engine = create_engine('postgresql:///Destination')
 
         source_table = pd.read_excel('amazon.xlsx')
-        source_table.to_sql('stg_amazon_sales_report', engine, index=False, if_exists='replace')
+        source_table = source_table.head(5)
+        source_table = source_table.copy()
+        source_table['user_id'] = source_table['user_id'].str.split(',')
+        source_table['user_name'] = source_table['user_name'].str.split(',')
+        source_table['review_id'] = source_table['review_id'].str.split(',')
+        source_table['review_title'] = source_table['review_title'].str.split(',')
+        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
+        source_table.to_sql('stg_ebay_sales_report', engine, index=False, if_exists='replace')
 
         # Addition of surrogate key columns to staging
         db_user = os.getenv('DB_USER')
@@ -213,19 +219,18 @@ def load_dim_user():
 def load_dim_review():
     engine = create_engine('postgresql:///Destination')
 
-    drr = pd.read_sql('stg_amazon_sales_report', engine)
-    review = drr[['review_id', 'review_title', 'review_content']].copy()
-    review = review.drop_duplicates(subset=['review_id', 'review_title'], keep='first')
+    drr = pd.read_sql('stg_ebay_sales_report', engine)
+    review = drr[['review_id', 'review_title']].copy()
+    review = review.rename(columns={'review_title': 'review_content'})
+    review = review.drop_duplicates(subset=['review_id'], keep='first')
     review = review.to_dict('records')
 
     insert_query = '''INSERT into amazon.dim_review (
     review_id,
-    review_title,
     review_content
     )
     VALUES (
     %(review_id)s,
-    %(review_title)s,
     %(review_content)s
     )'''
 
@@ -322,5 +327,3 @@ load_dim_review()
 load_surr_keys()
 
 transform_load_fact_table()
-
-
