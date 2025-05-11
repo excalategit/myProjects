@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
 import pandas as pd
 from sqlalchemy import create_engine
 import os
@@ -57,23 +54,31 @@ try:
             CREATE TABLE IF NOT EXISTS dim_review (
             review_key SERIAL PRIMARY KEY,
             review_id TEXT,
-            review_content TEXT
+            review_content TEXT,
+            product_key INT REFERENCES dim_product (product_key)
             )'''
 
             cursor.execute(create_dim_review)
 
-            create_fact_sale = '''
-            CREATE TABLE IF NOT EXISTS fact_sale (
-            sale_key SERIAL PRIMARY KEY,
+            create_join_table = '''
+            CREATE TABLE IF NOT EXISTS product_user_join (
             product_key INT REFERENCES dim_product (product_key),
             user_key INT REFERENCES dim_user (user_key),
-            review_key INT REFERENCES dim_review (review_key),
-            "actual_price (PLN)" FLOAT,
-            "discounted_price (PLN)" FLOAT,
-            discount_percentage TEXT
+            PRIMARY KEY (product_key, user_key)
             )'''
 
-            cursor.execute(create_fact_sale)
+            cursor.execute(create_join_table)
+
+            create_fact_price = '''
+            CREATE TABLE IF NOT EXISTS fact_price (
+            price_key SERIAL PRIMARY KEY,
+            "actual_price (PLN)" FLOAT,
+            "discounted_price (PLN)" FLOAT,
+            discount_percentage TEXT,
+            product_key INT REFERENCES dim_product (product_key)
+            )'''
+
+            cursor.execute(create_fact_price)
 
 except Exception as error:
     print(error)
@@ -125,7 +130,7 @@ def extract_transform():
         source_table['review_id'] = source_table['review_id'].str.split(',')
         source_table['review_title'] = source_table['review_title'].str.split(',')
         source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
-        source_table.to_sql('stg_ebay_sales_report', engine, index=False, if_exists='replace')
+        source_table.to_sql('stg_amazon_sales_report', engine, index=False, if_exists='replace')
 
         # Addition of surrogate key columns to staging
         db_user = os.getenv('DB_USER')
@@ -158,6 +163,49 @@ def extract_transform():
 
 
 # Defining the function that loads the transformed data to the dimension tables
+
+def load_dim_review():
+    engine = create_engine('postgresql:///Destination')
+
+    drr = pd.read_sql('stg_amazon_sales_report', engine)
+    review = drr[['review_id', 'review_title']].copy()
+    review = review.rename(columns={'review_title': 'review_content'})
+    review = review.drop_duplicates(subset=['review_id'], keep='first')
+    review = review.to_dict('records')
+
+    insert_query = '''INSERT into amazon.dim_review (
+    review_id,
+    review_content
+    )
+    VALUES (
+    %(review_id)s,
+    %(review_content)s
+    )'''
+
+    insert(insert_query, review)
+    return print('dim_review loaded successfully')
+
+
+def load_dim_user():
+    engine = create_engine('postgresql:///Destination')
+
+    du = pd.read_sql('stg_amazon_sales_report', engine)
+    user = du[['user_id', 'user_name']].copy()
+    user = user.drop_duplicates()
+    user = user.to_dict('records')
+
+    insert_query = '''INSERT into amazon.dim_user (
+    user_id,
+    user_name
+    ) 
+    VALUES (
+    %(user_id)s,
+    %(user_name)s
+    )'''
+
+    insert(insert_query, user)
+    return print('dim_user loaded successfully')
+
 
 def load_dim_product():
     engine = create_engine('postgresql:///Destination')
@@ -195,52 +243,9 @@ def load_dim_product():
     return print('dim_product loaded successfully')
 
 
-def load_dim_user():
-    engine = create_engine('postgresql:///Destination')
-
-    du = pd.read_sql('stg_amazon_sales_report', engine)
-    user = du[['user_id', 'user_name']].copy()
-    user = user.drop_duplicates()
-    user = user.to_dict('records')
-
-    insert_query = '''INSERT into amazon.dim_user (
-    user_id,
-    user_name
-    ) 
-    VALUES (
-    %(user_id)s,
-    %(user_name)s
-    )'''
-
-    insert(insert_query, user)
-    return print('dim_user loaded successfully')
-
-
-def load_dim_review():
-    engine = create_engine('postgresql:///Destination')
-
-    drr = pd.read_sql('stg_amazon_sales_report', engine)
-    review = drr[['review_id', 'review_title']].copy()
-    review = review.rename(columns={'review_title': 'review_content'})
-    review = review.drop_duplicates(subset=['review_id'], keep='first')
-    review = review.to_dict('records')
-
-    insert_query = '''INSERT into amazon.dim_review (
-    review_id,
-    review_content
-    )
-    VALUES (
-    %(review_id)s,
-    %(review_content)s
-    )'''
-
-    insert(insert_query, review)
-    return print('dim_review loaded successfully')
-
-
 # Defining the function that loads the surrogate keys to staging
 
-def load_surr_keys():
+def load_surrogate_keys():
     connection = None
     db_user = os.getenv('DB_USER')
     db_password = os.getenv('DB_PASSWORD')
@@ -255,6 +260,8 @@ def load_surr_keys():
                 port=5432) as connection:
 
             with connection.cursor() as cursor:
+                # loading keys to staging
+
                 product_key = '''UPDATE stg_amazon_sales_report AS s SET product_key = p.product_key 
                 FROM amazon.dim_product AS p WHERE s.product_id = p.product_id AND
                 s.product_name = p.product_name'''
@@ -267,10 +274,29 @@ def load_surr_keys():
 
                 review_key = '''UPDATE stg_amazon_sales_report AS s SET review_key = rr.review_key 
                 FROM amazon.dim_review AS rr WHERE s.review_id = rr.review_id AND
-                s.review_title = rr.review_title'''
+                s.review_title = rr.review_content'''
                 cursor.execute(review_key)
 
-                return print('staging updated with surr. keys successfully')
+                # loading to bridge table
+
+                load_to_bridge = '''INSERT INTO amazon.product_user_join (product_key, user_key)
+                SELECT
+                p.product_key,
+                u.user_key
+                FROM stg_amazon_sales_report sa
+                JOIN amazon.dim_product p ON sa.product_id = p.product_id
+                JOIN amazon.dim_user u ON sa.user_id = u.user_id'''
+                cursor.execute(load_to_bridge)
+
+                # loading dim_review surrogate keys to dim_product
+
+                load_to_dim_review = '''UPDATE amazon.dim_review r SET product_key = p.product_key
+                FROM stg_amazon_sales_report sa
+                JOIN amazon.dim_product p ON sa.product_id = p.product_id
+                WHERE r.review_id = sa.review_id'''
+                cursor.execute(load_to_dim_review)
+
+                return print('Staging and bridge tables updated with surrogate keys successfully')
 
     except Exception as error:
         print(error)
@@ -287,29 +313,26 @@ def transform_load_fact_table():
 
     dg = pd.read_sql('stg_amazon_sales_report', engine)
     fact = dg[['discounted_price', 'actual_price', 'discount_percentage',
-               'product_key', 'user_key', 'review_key']].copy()
+               'product_key']].copy()
 
     fact['discounted_price'] = fact['discounted_price'].str.replace('₹', '')
     fact['discounted_price'] = fact['discounted_price'].str.replace(',', '').astype(float)
     fact['actual_price'] = fact['actual_price'].str.replace('₹', '')
     fact['actual_price'] = fact['actual_price'].str.replace(',', '').astype(float)
+    fact = fact.drop_duplicates(subset=['product_key'], keep='first')
     fact = fact.to_dict('records')
 
-    insert_query = '''INSERT into amazon.fact_sale (
-    product_key,
-    user_key,
-    review_key, 
+    insert_query = '''INSERT into amazon.fact_price (
     "actual_price (PLN)",
     "discounted_price (PLN)",
-    discount_percentage
+    discount_percentage,
+    product_key
     ) 
     VALUES (
-    %(product_key)s,
-    %(user_key)s,
-    %(review_key)s,
     %(actual_price)s,
     %(discounted_price)s,
-    %(discount_percentage)s
+    %(discount_percentage)s,
+    %(product_key)s
     )'''
 
     insert(insert_query, fact)
@@ -318,12 +341,12 @@ def transform_load_fact_table():
 
 extract_transform()
 
-load_dim_product()
+load_dim_review()
 
 load_dim_user()
 
-load_dim_review()
+load_dim_product()
 
-load_surr_keys()
+load_surrogate_keys()
 
 transform_load_fact_table()
