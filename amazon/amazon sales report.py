@@ -114,7 +114,7 @@ def insert(insert_query, dataset):
             connection.close()
 
 
-# Defining the function that extracts and transforms to staging
+# Defining the function that extracts and transforms to staging.
 
 def extract_transform():
     connection = None
@@ -132,7 +132,7 @@ def extract_transform():
         source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
         source_table.to_sql('stg_amazon_sales_report', engine, index=False, if_exists='replace')
 
-        # Addition of surrogate key columns to staging
+        # Addition of surrogate key columns to staging.
         db_user = os.getenv('DB_USER')
         db_password = os.getenv('DB_PASS')
 
@@ -163,7 +163,7 @@ def extract_transform():
 
 
 # Defining the function that loads the transformed data to the dimension tables
-# starting with the sub-dimensions
+# starting with the sub-dimensions.
 
 def load_dim_review():
     engine = create_engine('postgresql:///Destination')
@@ -244,7 +244,7 @@ def load_dim_product():
     return print('dim_product loaded successfully')
 
 
-# Defining the function that fetches and loads surrogate keys to their respective target tables
+# Defining the function that fetches and loads surrogate keys to their respective target tables.
 
 def load_surrogate_keys():
     connection = None
@@ -261,7 +261,7 @@ def load_surrogate_keys():
                 port=5432) as connection:
 
             with connection.cursor() as cursor:
-                # loading surrogate keys from dim tables to staging
+                # Loading surrogate keys from dim tables to staging.
 
                 product_key = '''UPDATE stg_amazon_sales_report AS s SET product_key = p.product_key 
                 FROM amazon.dim_product AS p WHERE s.product_id = p.product_id AND
@@ -278,7 +278,7 @@ def load_surrogate_keys():
                 s.review_title = rr.review_content'''
                 cursor.execute(review_key)
 
-                # loading surrogate keys from parent tables to join table
+                # Loading surrogate keys from parent tables to join table.
 
                 load_to_bridge = '''INSERT INTO amazon.product_user_join (product_key, user_key)
                 SELECT
@@ -289,7 +289,7 @@ def load_surrogate_keys():
                 JOIN amazon.dim_user u ON sa.user_id = u.user_id'''
                 cursor.execute(load_to_bridge)
 
-                # loading dim_review table's surrogate keys to dim_product
+                # Loading dim_review table's surrogate keys to dim_product.
 
                 load_to_dim_review = '''UPDATE amazon.dim_review r SET product_key = p.product_key
                 FROM stg_amazon_sales_report sa
@@ -308,7 +308,7 @@ def load_surrogate_keys():
 
 
 # Finally, defining the function that transforms and loads data to the fact table together with
-# all fetched surrogate keys
+# all fetched surrogate keys.
 
 def transform_load_fact_table():
     engine = create_engine('postgresql:///Destination')
