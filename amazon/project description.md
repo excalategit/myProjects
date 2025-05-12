@@ -13,3 +13,6 @@ Note that this design sometimes require some transformation to be done on the da
 before exporting to dimension tables. This is because at the step where surrogate keys are
 loaded back to staging, the action is based on a comparison between staging and dimension
 table data which will fail if one table is transformed and the other not.
+
+
+In progress: the relationships in this example are not logical, the example is therefore unique in that it is a big exception from the norm. a product dimension might normally be sub-dimensioned to product category, and not review as in this case.
