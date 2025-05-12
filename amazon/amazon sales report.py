@@ -278,24 +278,39 @@ def load_surrogate_keys():
                 s.review_title = rr.review_content'''
                 cursor.execute(review_key)
 
-                # Loading surrogate keys from parent tables to join table.
+                # Loading dim_product table's surrogate keys from staging to dim_review.
 
-                load_to_bridge = '''INSERT INTO amazon.product_user_join (product_key, user_key)
-                SELECT
-                p.product_key,
-                u.user_key
+                load_to_dim_review = '''UPDATE amazon.dim_review r SET product_key = sa.product_key
                 FROM stg_amazon_sales_report sa
-                JOIN amazon.dim_product p ON sa.product_id = p.product_id
-                JOIN amazon.dim_user u ON sa.user_id = u.user_id'''
-                cursor.execute(load_to_bridge)
-
-                # Loading dim_review table's surrogate keys to dim_product.
-
-                load_to_dim_review = '''UPDATE amazon.dim_review r SET product_key = p.product_key
-                FROM stg_amazon_sales_report sa
-                JOIN amazon.dim_product p ON sa.product_id = p.product_id
                 WHERE r.review_id = sa.review_id'''
                 cursor.execute(load_to_dim_review)
+
+                # Had the product_key data not been present on staging but on the dim_product table
+                # the script below would've been used.
+
+                # load_to_dim_review = '''UPDATE amazon.dim_review r SET product_key = p.product_key
+                # FROM stg_amazon_sales_report sa
+                # JOIN amazon.dim_product p ON sa.product_id = p.product_id
+                # WHERE r.review_id = sa.review_id'''
+                # cursor.execute(load_to_dim_review)
+
+                # Loading surrogate keys from staging table to join table.
+                load_to_bridge = '''INSERT INTO amazon.product_user_join (product_key, user_key)
+                SELECT product_key, user_key
+                FROM stg_amazon_sales_report'''
+                cursor.execute(load_to_bridge)
+
+                # Had the product_key and user_key not been present on staging but on the dim_product and
+                # dim_user tables the script below would've been used.
+
+                # load_to_bridge = '''INSERT INTO amazon.product_user_join (product_key, user_key)
+                # SELECT
+                # p.product_key,
+                # u.user_key
+                # FROM stg_amazon_sales_report sa
+                # JOIN amazon.dim_product p ON sa.product_id = p.product_id
+                # JOIN amazon.dim_user u ON sa.user_id = u.user_id'''
+                # cursor.execute(load_to_bridge)
 
                 return print('All target tables updated with surrogate keys successfully')
 
