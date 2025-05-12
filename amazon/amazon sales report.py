@@ -163,6 +163,7 @@ def extract_transform():
 
 
 # Defining the function that loads the transformed data to the dimension tables
+# starting with the sub-dimensions
 
 def load_dim_review():
     engine = create_engine('postgresql:///Destination')
@@ -243,7 +244,7 @@ def load_dim_product():
     return print('dim_product loaded successfully')
 
 
-# Defining the function that loads the surrogate keys to staging
+# Defining the function that fetches and loads surrogate keys to their respective target tables
 
 def load_surrogate_keys():
     connection = None
@@ -260,7 +261,7 @@ def load_surrogate_keys():
                 port=5432) as connection:
 
             with connection.cursor() as cursor:
-                # loading keys to staging
+                # loading surrogate keys from dim tables to staging
 
                 product_key = '''UPDATE stg_amazon_sales_report AS s SET product_key = p.product_key 
                 FROM amazon.dim_product AS p WHERE s.product_id = p.product_id AND
@@ -277,7 +278,7 @@ def load_surrogate_keys():
                 s.review_title = rr.review_content'''
                 cursor.execute(review_key)
 
-                # loading to bridge table
+                # loading surrogate keys from parent tables to join table
 
                 load_to_bridge = '''INSERT INTO amazon.product_user_join (product_key, user_key)
                 SELECT
@@ -288,7 +289,7 @@ def load_surrogate_keys():
                 JOIN amazon.dim_user u ON sa.user_id = u.user_id'''
                 cursor.execute(load_to_bridge)
 
-                # loading dim_review surrogate keys to dim_product
+                # loading dim_review table's surrogate keys to dim_product
 
                 load_to_dim_review = '''UPDATE amazon.dim_review r SET product_key = p.product_key
                 FROM stg_amazon_sales_report sa
@@ -296,7 +297,7 @@ def load_surrogate_keys():
                 WHERE r.review_id = sa.review_id'''
                 cursor.execute(load_to_dim_review)
 
-                return print('Staging and bridge tables updated with surrogate keys successfully')
+                return print('All target tables updated with surrogate keys successfully')
 
     except Exception as error:
         print(error)
@@ -306,7 +307,8 @@ def load_surrogate_keys():
             connection.close()
 
 
-# Finally, defining the function that transforms and loads the fact table together with the surrogate keys
+# Finally, defining the function that transforms and loads data to the fact table together with
+# all fetched surrogate keys
 
 def transform_load_fact_table():
     engine = create_engine('postgresql:///Destination')
