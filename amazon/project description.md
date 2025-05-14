@@ -12,11 +12,11 @@ prompted the second, optimized design.
 The data pipeline fetches data from an excel file, transforms, and uploads it to a Postgres database.
 
 The design here (based on best practice) loads data to a staging table, transforms
-and exports dimension data to their tables, fetches the surrogate keys from those tables and
-imports them back to the staging table before finally transforming and exporting fact data together with all 
+and exports dimension data to their respective tables, fetches the surrogate keys from those tables and
+imports them back to the staging table, before finally transforming and exporting fact data together with all 
 surrogate keys to the fact table.
 
-This design involving first loading all surrogate keys back to staging is preferred as it avoids table joins while loading surrogate to subsequent target tables e.g. to fact table, because all data is already in one place.
+This design involving first loading all surrogate keys back to staging is preferred as it avoids table joins while loading surrogate keys to subsequent target tables e.g. to fact table, because all data is already in one place.
 
 Note that this design sometimes require some transformation to be done on the data in staging
 before exporting to dimension tables. This is because at the step where surrogate keys are
