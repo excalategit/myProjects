@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# coding: utf-8
-
 # Here, some transformations are required to the data before loading to staging because:
 # - some of the data are in the form of dictionaries which cannot be loaded in its present form to a Postgres database.
 # - some of the data are needed in a transformed form for 1:1 comparison with dimension tables later.
@@ -161,34 +158,34 @@ try:
             )'''
             
             cursor.execute(create_dim_product)
-            
+
+            create_dim_city = '''
+            CREATE TABLE IF NOT EXISTS dim_city (
+            city_key SERIAL PRIMARY KEY,
+            city TEXT
+            )'''
+
+            cursor.execute(create_dim_city)
+
             create_dim_user = '''
             CREATE TABLE IF NOT EXISTS dim_user (
             user_key SERIAL PRIMARY KEY,
             user_id INT UNIQUE,
+            first_name TEXT,
+            last_name TEXT,
             email TEXT,
             username TEXT,
             password TEXT,
             phone TEXT,
-            first_name TEXT,
-            last_name TEXT
-            )'''
-            
-            cursor.execute(create_dim_user)
-            
-            create_dim_address = '''
-            CREATE TABLE IF NOT EXISTS dim_address (
-            address_key SERIAL PRIMARY KEY,
-            city TEXT,
             street TEXT,
             number INT,
             zipcode TEXT,
             latitude TEXT,
             longitude TEXT,
-            user_id INT REFERENCES dim_user(user_id)
+            city_key INT REFERENCES dim_city (city_key)
             )'''
             
-            cursor.execute(create_dim_address)
+            cursor.execute(create_dim_user)
             
             create_dim_date = '''
             CREATE TABLE IF NOT EXISTS dim_date (
@@ -295,57 +292,25 @@ def transform_load_dim_user():
         engine = create_engine('postgresql:///Destination')
 
         du = pd.read_sql('stg_combo_table', engine)
-        user = du[['userId', 'email', 'username', 'password', 'phone', 'firstname', 'lastname']].copy()
-        user = user.rename(columns={'userId':'user_id'})
+        user = du[['userId', 'email', 'username', 'password', 'phone', 'firstname', 'lastname',
+                   'street', 'number', 'zipcode', 'geolocation.lat', 'geolocation.long']].copy()
+        user = user.rename(columns={'userId':'user_id', 'geolocation.lat': 'latitude', 'geolocation.long': 'longitude'})
         user['email'] = '***Masked***'
         user['username'] = '***Masked***'
         user['password'] = '***Masked***'
         user['phone'] = '***Masked***'
+        user['street'] = user['street'].str.title()
         user = user.drop_duplicates(subset=['user_id', 'firstname', 'lastname'], keep='first')
         user = user.to_dict('records')
 
         insert_query = '''INSERT into dim_user (
         user_id,
+        first_name,
+        last_name,
         email,
         username,
         password,
         phone,
-        first_name,
-        last_name
-        ) 
-        VALUES (
-        %(user_id)s,
-        %(email)s,
-        %(username)s,
-        %(password)s,
-        %(phone)s,
-        %(firstname)s,
-        %(lastname)s
-        )'''
-
-        insert(insert_query, user)
-        return print('dim_user loaded successfully')
-    
-    except Exception as error:
-        print(error)
-
-
-def transform_load_dim_address():
-    try:
-
-        engine = create_engine('postgresql:///Destination')
-
-        da = pd.read_sql('stg_combo_table', engine)
-        address = da[['userId', 'city', 'street', 'number', 'zipcode', 'geolocation.lat', 'geolocation.long']].copy()
-        address = address.rename(columns={'userId':'user_id', 'geolocation.lat':'latitude', 'geolocation.long':'longitude'})
-        address['city'] = address['city'].str.title()
-        address['street'] = address['street'].str.title()
-        address = address.drop_duplicates(subset=['user_id'], keep='first')
-        address = address.to_dict('records')
-
-        insert_query = '''INSERT into dim_address (
-        user_id,
-        city,
         street,
         number,
         zipcode,
@@ -354,7 +319,12 @@ def transform_load_dim_address():
         ) 
         VALUES (
         %(user_id)s,
-        %(city)s,
+        %(firstname)s,
+        %(lastname)s,
+        %(email)s,
+        %(username)s,
+        %(password)s,
+        %(phone)s,
         %(street)s,
         %(number)s,
         %(zipcode)s,
@@ -362,8 +332,8 @@ def transform_load_dim_address():
         %(longitude)s
         )'''
 
-        insert(insert_query, address)
-        return print('dim_address loaded successfully')
+        insert(insert_query, user)
+        return print('dim_user loaded successfully')
     
     except Exception as error:
         print(error)
@@ -400,7 +370,7 @@ def transform_load_dim_date():
 # Defining the function that loads the surrogate keys of each dimension table to staging
 
 
-def load_surr_keys():
+def load_surrogate_keys():
     connection = None
     db_user = os.getenv('DB_USER')
     db_password = os.getenv('DB_PASSWORD')
@@ -415,7 +385,8 @@ def load_surr_keys():
                 port=5432) as connection:
 
             with connection.cursor() as cursor:
-                
+                # Loading surrogate keys from dimension tables to staging.
+
                 product_key = '''UPDATE stg_combo_table AS c SET product_key = p.product_key 
                 FROM homework.dim_product AS p WHERE c."productId" = p.product_id AND
                 c.title = p.product_name'''
@@ -429,8 +400,24 @@ def load_surr_keys():
                 date_key = '''UPDATE stg_combo_table AS c SET date_key = d.date_key 
                 FROM homework.dim_date AS d WHERE c.date = d.sale_date'''
                 cursor.execute(date_key)
+
+                # Fetching surrogate keys from dim_city and loading to dim_user.
+                # Note that since there is only one attribute and no transformation required
+                # it is more efficient loading dim_city this way than through a dataframe.
+                # This also explains why its loading is designed to happen at this point i.e. together with
+                # similar sql commands.
+
+                load_dim_city = '''INSERT INTO homework.dim_city (city)
+                SELECT DISTINCT city FROM stg_combo_table'''
+                cursor.execute(load_dim_city)
+
+                update_dim_user = '''UPDATE homework.dim_user AS u SET city_key = c.city_key 
+                FROM stg_combo_table AS s
+                JOIN homework.dim_city AS c ON s.city = c.city
+                WHERE u.user_id = s."userId" '''
+                cursor.execute(update_dim_user)
                 
-                return print('staging updated with surr. keys successfully')
+                return print('All target tables updated with surrogate keys successfully.')
     
     except Exception as error:
         print(error)
@@ -492,10 +479,8 @@ transform_load_dim_product()
 
 transform_load_dim_user()
 
-transform_load_dim_address()
-
 transform_load_dim_date()
 
-load_surr_keys()
+load_surrogate_keys()
 
 transform_load_fact_table()
