@@ -42,7 +42,7 @@ def sale_scraper(sale_url):
         # It appears the join command is not working as expected to combine the original df
         # and the normalized data, probably due to an earlier explosion step (because that's the
         # only additional step making it different from the usage of 'join' in the function above,
-        # where join was used successfully). Therefore concat is used here instead.
+        # where join was used successfully). Therefore, concat is used here instead.
         sale_df_expanded = sale_df_expanded.drop(columns=['products'])
         sale_df_expanded['date'] = pd.to_datetime(sale_df_expanded['date']).dt.date
         sale_df_expanded['month'] = pd.to_datetime(sale_df_expanded['date']).dt.month
@@ -66,7 +66,7 @@ def user_scraper(user_url):
         user_df_expand2 = user_df_expand2.drop(columns=['name'])
         # The transformation below is required at this step instead of later only because 
         # the data is required to already be in its cleaned form in staging for the 
-        # comparison done in the load_surr-keys() function to work.
+        # comparison done in the load_surrogate-keys() function to work.
         user_df_expand2['firstname'] = user_df_expand2['firstname'].str.capitalize()
         user_df_expand2['lastname'] = user_df_expand2['lastname'].str.capitalize()
         
@@ -109,7 +109,7 @@ try:
             
             cursor.execute(create_combined_stg_table) 
 
-            # creation of additional columns on staging to hold surrogate keys
+            # Creation of additional columns on staging to hold surrogate keys
             # from dim tables.
             update_staging = '''
             ALTER TABLE stg_combo_table
