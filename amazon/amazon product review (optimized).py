@@ -114,7 +114,7 @@ def extract_transform():
     try:
         engine = create_engine('postgresql:///Destination')
 
-        source_table = pd.read_excel('amazon.xlsx')
+        source_table = pd.read_excel('amazon/amazon.xlsx')
         source_table = source_table.head(5)
         source_table = source_table.copy()
         source_table['user_id'] = source_table['user_id'].str.split(',')
@@ -122,7 +122,7 @@ def extract_transform():
         source_table['review_id'] = source_table['review_id'].str.split(',')
         source_table['review_title'] = source_table['review_title'].str.split(',')
         source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
-        source_table.to_sql('stg_amazon_sales_report', engine, index=False, if_exists='replace')
+        source_table.to_sql('stg_product_review', engine, index=False, if_exists='replace')
 
         # Addition of surrogate key columns to staging.
         db_user = os.getenv('DB_USER')
@@ -136,7 +136,7 @@ def extract_transform():
                 port=5432) as connection:
 
             with connection.cursor() as cursor:
-                staging_update = '''ALTER TABLE stg_amazon_sales_report
+                staging_update = '''ALTER TABLE stg_product_review
                 ADD COLUMN product_key INT,
                 ADD COLUMN user_key INT,
                 ADD COLUMN review_key INT
@@ -159,7 +159,7 @@ def extract_transform():
 def load_dim_product():
     engine = create_engine('postgresql:///Destination')
 
-    dp = pd.read_sql('stg_amazon_sales_report', engine)
+    dp = pd.read_sql('stg_product_review', engine)
     product = dp[['product_id', 'product_name', 'category', 'about_product', 'img_link', 'product_link',
                   'rating', 'rating_count']].copy()
     product['rating_count'] = product['rating_count'].fillna(1)
@@ -195,7 +195,7 @@ def load_dim_product():
 def load_dim_user():
     engine = create_engine('postgresql:///Destination')
 
-    du = pd.read_sql('stg_amazon_sales_report', engine)
+    du = pd.read_sql('stg_product_review', engine)
     user = du[['user_id', 'user_name']].copy()
     user = user.drop_duplicates()
     user = user.to_dict('records')
@@ -216,7 +216,7 @@ def load_dim_user():
 def load_dim_review():
     engine = create_engine('postgresql:///Destination')
 
-    drr = pd.read_sql('stg_amazon_sales_report', engine)
+    drr = pd.read_sql('stg_product_review', engine)
     review = drr[['review_id', 'review_title']].copy()
     review = review.rename(columns={'review_title': 'review_content'})
     review = review.drop_duplicates(subset=['review_id'], keep='first')
@@ -254,17 +254,17 @@ def load_surrogate_keys():
             with connection.cursor() as cursor:
                 # Loading surrogate keys from dimension tables to staging.
 
-                product_key = '''UPDATE stg_amazon_sales_report AS s SET product_key = p.product_key 
+                product_key = '''UPDATE stg_product_review AS s SET product_key = p.product_key 
                 FROM amazon.dim_product AS p WHERE s.product_id = p.product_id AND
                 s.product_name = p.product_name'''
                 cursor.execute(product_key)
 
-                user_key = '''UPDATE stg_amazon_sales_report AS s SET user_key = u.user_key 
+                user_key = '''UPDATE stg_product_review AS s SET user_key = u.user_key 
                 FROM amazon.dim_user AS u WHERE s.user_id = u.user_id AND
                 s.user_name = u.user_name'''
                 cursor.execute(user_key)
 
-                review_key = '''UPDATE stg_amazon_sales_report AS s SET review_key = r.review_key 
+                review_key = '''UPDATE stg_product_review AS s SET review_key = r.review_key 
                 FROM amazon.dim_review AS r WHERE s.review_id = r.review_id AND
                 s.review_title = r.review_content'''
                 cursor.execute(review_key)
@@ -272,14 +272,14 @@ def load_surrogate_keys():
                 # Loading dim_product table's surrogate keys from staging to dim_review.
 
                 load_prod_review = '''UPDATE amazon.dim_review r SET product_key = sa.product_key
-                FROM stg_amazon_sales_report sa
+                FROM stg_product_review sa
                 WHERE r.review_id = sa.review_id'''
                 cursor.execute(load_prod_review)
 
                 # Loading dim_user table's surrogate keys from staging to dim_review.
 
                 load_user_review = '''UPDATE amazon.dim_review r SET user_key = sa.user_key
-                FROM stg_amazon_sales_report sa
+                FROM stg_product_review sa
                 WHERE r.review_id = sa.review_id'''
                 cursor.execute(load_user_review)
 
@@ -299,7 +299,7 @@ def load_surrogate_keys():
 def transform_load_fact_table():
     engine = create_engine('postgresql:///Destination')
 
-    dg = pd.read_sql('stg_amazon_sales_report', engine)
+    dg = pd.read_sql('stg_product_review', engine)
     fact = dg[['discounted_price', 'actual_price', 'discount_percentage',
                'product_key']].copy()
 
