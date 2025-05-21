@@ -1,6 +1,6 @@
 Project Description
 
-The project covers the initial work of designing a data model and loading data to it as usual but additionally includes the daily utilization of the pipeline with incremental load and its implications. The exercise provides a practical insight into the concept of incremental load for the first time.
+The project covers the initial work of designing a data model and loading data to it (as usual) but additionally includes the daily utilization of the data pipeline with incremental load, and its implications. The exercise provides a practical insight into the concept of incremental load for the first time.
 
 Some of the insights gathered are:
 
@@ -10,4 +10,4 @@ Some of the insights gathered are:
 - Clearer understanding of the need for upsert (DO UPDATE SET vs. DO NOTHING), the tables it is required on, and why. 
 - An appreciation of efficiency and storage considerations in the process. 
 - A realization of staging as the repository for historical data, while fact and dimension are used for unique data.
-- a better feel for the daily activities of a data engineer.
+- A better feel for the daily activities of a data engineer.
