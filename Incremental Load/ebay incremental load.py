@@ -8,8 +8,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 # Defining the function that will perform the INSERT action when called by the ETL stages.
+
 
 def insert(insert_query, dataset):
     connection = None
@@ -44,14 +44,17 @@ def extract_transform():
 
         source_table = pd.read_excel('incremental load/ebay.xlsx')
         source_table = source_table.copy()
+
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
         source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
+        # This fetches only data that was modified yesterday (incremental).
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
         source_table['review_id'] = source_table['review_id'].str.split(',')
         source_table['review_title'] = source_table['review_title'].str.split(',')
         source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
         source_table['created_date'] = datetime.today().date()
+        # Best practice is to add a created date column to staging for audit purposes.
         source_table.to_sql('stg_product_review', engine, index=False, if_exists='append')
 
         return print('Extraction to staging completed')
@@ -68,11 +71,12 @@ def load_dim_product():
     dp = pd.read_sql('stg_product_review', engine)
     product = dp[['product_id', 'product_name', 'category', 'about_product', 'img_link', 'product_link',
                   'rating', 'rating_count', 'created_date']].copy()
+
     product['created_date'] = pd.to_datetime(product['created_date']).dt.date
     product = product[product['created_date'] == datetime.today().date()]
+    # This fetches only today's product data from staging.
     product['rating_count'] = product['rating_count'].fillna(1)
     product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
-    # It is best practice to deduplicate dim tables using business keys alone.
     product = product.to_dict('records')
 
     insert_query = '''INSERT into ebay.dim_product (
@@ -115,8 +119,10 @@ def load_dim_user():
 
     du = pd.read_sql('stg_product_review', engine)
     user = du[['user_id', 'user_name', 'created_date']].copy()
+
     user['created_date'] = pd.to_datetime(user['created_date']).dt.date
     user = user[user['created_date'] == datetime.today().date()]
+    # This fetches only today's user data from staging.
     user = user.drop_duplicates()
     user = user.to_dict('records')
 
@@ -142,8 +148,10 @@ def load_dim_review():
 
     drr = pd.read_sql('stg_product_review', engine)
     review = drr[['review_id', 'review_title', 'created_date']].copy()
+
     review['created_date'] = pd.to_datetime(review['created_date']).dt.date
     review = review[review['created_date'] == datetime.today().date()]
+    # This fetches only today's review data from staging.
     review = review.rename(columns={'review_title': 'review_content'})
     review = review.drop_duplicates(subset=['review_id'], keep='first')
     review = review.to_dict('records')
@@ -182,7 +190,8 @@ def load_surrogate_keys():
                 port=5432) as connection:
 
             with connection.cursor() as cursor:
-                # Loading surrogate keys from dimension tables to staging.
+                # Loading surrogate keys from dimension tables to staging. For efficiency,
+                # only today's newly generated surrogate keys are added to staging.
 
                 product_key = '''UPDATE stg_product_review AS s SET product_key = p.product_key 
                 FROM ebay.dim_product AS p WHERE s.created_date = CURRENT_DATE AND 
@@ -223,7 +232,7 @@ def load_surrogate_keys():
             connection.close()
 
 
-# Finally, defining the function that transforms and loads data from staging to the fact table together with
+# Defining the function that transforms and loads data from staging to the fact table together with
 # all surrogate keys.
 
 def transform_load_fact_table():
@@ -235,6 +244,7 @@ def transform_load_fact_table():
 
     fact['created_date'] = pd.to_datetime(fact['created_date']).dt.date
     fact = fact[fact['created_date'] == datetime.today().date()]
+    # This fetches only today's fact data from staging.
     fact['discounted_price'] = fact['discounted_price'].str.replace('₹', '')
     fact['discounted_price'] = fact['discounted_price'].str.replace(',', '').astype(float)
     fact['actual_price'] = fact['actual_price'].str.replace('₹', '')
