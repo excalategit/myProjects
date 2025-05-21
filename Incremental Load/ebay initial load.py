@@ -9,8 +9,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Creating the fact and dimension tables where the transformed data will be loaded to.
-# Here the connection is defined with an additional specification for the schema since here
-# the tables are not created on the default public schema.
 
 connection = None
 db_user = os.getenv('DB_USER')
@@ -25,7 +23,6 @@ try:
             password=db_password,
             port=5432,
             options='-c search_path=ebay') as connection:
-        # This is how to indicate the schema of interest
 
         with connection.cursor() as cursor:
             create_dim_product = '''
@@ -120,11 +117,13 @@ def extract_transform():
         source_table = source_table.copy()
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
         source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
+        # This fetches only data that was modified yesterday (incremental).
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
         source_table['review_id'] = source_table['review_id'].str.split(',')
         source_table['review_title'] = source_table['review_title'].str.split(',')
         source_table['created_date'] = datetime.today().date()
+        # Best practice is to add a created date column to staging for audit purposes.
         source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
         source_table.to_sql('stg_product_review', engine, index=False, if_exists='fail')
 
@@ -297,7 +296,7 @@ def load_surrogate_keys():
             connection.close()
 
 
-# Finally, defining the function that transforms and loads data from staging to the fact table together with
+# Defining the function that transforms and loads data from staging to the fact table together with
 # all surrogate keys.
 
 def transform_load_fact_table():
