@@ -81,10 +81,11 @@ finally:
 
 # Defining the function that will perform the INSERT action when called by the ETL stages.
 
-def insert(insert_query, dataset):
+def insert(insert_query, dataset, table_name):
     connection = None
     db_user = os.getenv('DB_USER')
     db_password = os.getenv('DB_PASSWORD')
+    loaded_rows = 0
 
     try:
         with psycopg2.connect(
@@ -96,9 +97,11 @@ def insert(insert_query, dataset):
 
             with connection.cursor() as cursor:
                 psycopg2.extras.execute_batch(cursor, insert_query, dataset)
+                print(f'Rows {loaded_rows} to {len(dataset)} loaded successfully for {table_name}')
+                loaded_rows += len(dataset)
 
     except Exception as error:
-        print(error)
+        print(f'Loading failed for {table_name}: {error}')
 
     finally:
         if connection is not None:
@@ -117,7 +120,8 @@ def extract_transform():
         source_table = source_table.copy()
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
         source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
-        # This fetches only data that was modified yesterday (incremental).
+        # In this design, this fetches only data that was modified yesterday but in reality it should
+        # fetch all data from the source system including historical data since it is a first load.
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
         source_table['review_id'] = source_table['review_id'].str.split(',')
@@ -150,7 +154,7 @@ def extract_transform():
                 return print('Extraction to staging completed')
 
     except Exception as error:
-        print(error)
+        print(f'Extraction to staging failed: {error}')
 
     finally:
         if connection is not None:
@@ -160,82 +164,100 @@ def extract_transform():
 # Defining the function that loads the transformed data to the dimension tables.
 
 def load_dim_product():
-    engine = create_engine('postgresql:///Destination')
+    table_name = 'dim_product'
 
-    dp = pd.read_sql('stg_product_review', engine)
-    product = dp[['product_id', 'product_name', 'category', 'about_product', 'img_link', 'product_link',
-                  'rating', 'rating_count']].copy()
-    product['rating_count'] = product['rating_count'].fillna(1)
-    product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
-    # It is best practice to deduplicate dim tables using business keys alone.
-    product = product.to_dict('records')
+    try:
+        engine = create_engine('postgresql:///Destination')
 
-    insert_query = '''INSERT into ebay.dim_product (
-    product_id,
-    product_name,
-    category,
-    about_product,
-    img_link,
-    product_link,
-    rating,
-    rating_count
-    ) 
-    VALUES (
-    %(product_id)s,
-    %(product_name)s,
-    %(category)s,
-    %(about_product)s,
-    %(img_link)s,
-    %(product_link)s,
-    %(rating)s,
-    %(rating_count)s
-    )'''
+        dp = pd.read_sql('stg_product_review', engine)
+        product = dp[['product_id', 'product_name', 'category', 'about_product', 'img_link', 'product_link',
+                      'rating', 'rating_count']].copy()
+        product['rating_count'] = product['rating_count'].fillna(1)
+        product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
+        # It is best practice to deduplicate dim tables using business keys alone.
+        product = product.to_dict('records')
 
-    insert(insert_query, product)
-    return print('dim_product loaded successfully')
+        insert_query = '''INSERT into ebay.dim_product (
+        product_id,
+        product_name,
+        category,
+        about_product,
+        img_link,
+        product_link,
+        rating,
+        rating_count
+        ) 
+        VALUES (
+        %(product_id)s,
+        %(product_name)s,
+        %(category)s,
+        %(about_product)s,
+        %(img_link)s,
+        %(product_link)s,
+        %(rating)s,
+        %(rating_count)s
+        )'''
+
+        insert(insert_query, product)
+        return None
+
+    except Exception as error:
+        print(f'Potential issue with transformation step: {error}')
 
 
 def load_dim_user():
-    engine = create_engine('postgresql:///Destination')
+    table_name = 'dim_user'
 
-    du = pd.read_sql('stg_product_review', engine)
-    user = du[['user_id', 'user_name']].copy()
-    user = user.drop_duplicates()
-    user = user.to_dict('records')
+    try:
+        engine = create_engine('postgresql:///Destination')
 
-    insert_query = '''INSERT into ebay.dim_user (
-    user_id,
-    user_name
-    ) 
-    VALUES (
-    %(user_id)s,
-    %(user_name)s
-    )'''
+        du = pd.read_sql('stg_product_review', engine)
+        user = du[['user_id', 'user_name']].copy()
+        user = user.drop_duplicates()
+        user = user.to_dict('records')
 
-    insert(insert_query, user)
-    return print('dim_user loaded successfully')
+        insert_query = '''INSERT into ebay.dim_user (
+        user_id,
+        user_name
+        ) 
+        VALUES (
+        %(user_id)s,
+        %(user_name)s
+        )'''
+
+        insert(insert_query, user, table_name)
+        return None
+
+    except Exception as error:
+        print(f'Potential issue with transformation step: {error}')
 
 
 def load_dim_review():
-    engine = create_engine('postgresql:///Destination')
+    table_name = 'dim_review'
 
-    drr = pd.read_sql('stg_product_review', engine)
-    review = drr[['review_id', 'review_title']].copy()
-    review = review.rename(columns={'review_title': 'review_content'})
-    review = review.drop_duplicates(subset=['review_id'], keep='first')
-    review = review.to_dict('records')
+    try:
+        engine = create_engine('postgresql:///Destination')
 
-    insert_query = '''INSERT into ebay.dim_review (
-    review_id,
-    review_content
-    )
-    VALUES (
-    %(review_id)s,
-    %(review_content)s
-    )'''
+        drr = pd.read_sql('stg_product_review', engine)
+        review = drr[['review_id', 'review_title']].copy()
+        review = review.rename(columns={'review_title': 'review_content'})
+        review = review.drop_duplicates(subset=['review_id'], keep='first')
+        review = review.to_dict('records')
 
-    insert(insert_query, review)
-    return print('dim_review loaded successfully')
+        insert_query = '''INSERT into ebay.dim_review (
+        review_id,
+        review_content
+        )
+        VALUES (
+        %(review_id)s,
+        %(review_content)s
+        )'''
+
+        insert(insert_query, review, table_name)
+        return None
+
+    except Exception as error:
+        print(f'Potential issue with transformation step: {error}')
 
 
 # Defining the function that fetches and loads surrogate keys to their respective target tables.
@@ -289,7 +311,7 @@ def load_surrogate_keys():
                 return print('All target tables updated with surrogate keys successfully')
 
     except Exception as error:
-        print(error)
+        print(f'Loading surrogate keys failed: {error}')
 
     finally:
         if connection is not None:
@@ -300,35 +322,40 @@ def load_surrogate_keys():
 # all surrogate keys.
 
 def transform_load_fact_table():
-    engine = create_engine('postgresql:///Destination')
+    table_name = 'fact_table'
 
-    dg = pd.read_sql('stg_product_review', engine)
-    fact = dg[['discounted_price', 'actual_price', 'discount_percentage',
-               'product_key']].copy()
+    try:
+        engine = create_engine('postgresql:///Destination')
 
-    fact['discounted_price'] = fact['discounted_price'].str.replace('₹', '')
-    fact['discounted_price'] = fact['discounted_price'].str.replace(',', '').astype(float)
-    fact['actual_price'] = fact['actual_price'].str.replace('₹', '')
-    fact['actual_price'] = fact['actual_price'].str.replace(',', '').astype(float)
-    fact = fact.drop_duplicates(subset=['product_key'], keep='first')
-    fact = fact.to_dict('records')
+        dg = pd.read_sql('stg_product_review', engine)
+        fact = dg[['discounted_price', 'actual_price', 'discount_percentage',
+                   'product_key']].copy()
 
-    insert_query = '''INSERT into ebay.fact_price (
-    "actual_price (PLN)",
-    "discounted_price (PLN)",
-    discount_percentage,
-    product_key
-    ) 
-    VALUES (
-    %(actual_price)s,
-    %(discounted_price)s,
-    %(discount_percentage)s,
-    %(product_key)s
-    )'''
+        fact['discounted_price'] = fact['discounted_price'].str.replace('₹', '')
+        fact['discounted_price'] = fact['discounted_price'].str.replace(',', '').astype(float)
+        fact['actual_price'] = fact['actual_price'].str.replace('₹', '')
+        fact['actual_price'] = fact['actual_price'].str.replace(',', '').astype(float)
+        fact = fact.drop_duplicates(subset=['product_key'], keep='first')
+        fact = fact.to_dict('records')
 
-    insert(insert_query, fact)
-    return print('fact_table loaded successfully')
+        insert_query = '''INSERT into ebay.fact_price (
+        "actual_price (PLN)",
+        "discounted_price (PLN)",
+        discount_percentage,
+        product_key
+        ) 
+        VALUES (
+        %(actual_price)s,
+        %(discounted_price)s,
+        %(discount_percentage)s,
+        %(product_key)s
+        )'''
 
+        insert(insert_query, fact, table_name)
+        return None
+
+    except Exception as error:
+        print(f'Potential issue with transformation step: {error}')
 
 extract_transform()
 
