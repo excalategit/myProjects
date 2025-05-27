@@ -83,7 +83,8 @@ try:
             log_id SERIAL PRIMARY KEY,
             table_name TEXT,
             staging_count INT,
-            target_count INT,
+            insert_count INT,
+            update_count INT,
             status TEXT,
             log_date DATE DEFAULT CURRENT_DATE
             )'''
@@ -97,24 +98,40 @@ try:
             AS $$
             DECLARE
                 v_staging_count INT;
-                v_target_count INT;
+                v_insert_count INT;
+                v_update_count INT;
                 v_result TEXT;
 
             BEGIN
                 EXECUTE format ('SELECT COUNT (DISTINCT %I) FROM public.stg_product_review
                 WHERE created_date = CURRENT_DATE', p_column_name) INTO v_staging_count;
 
-                EXECUTE format ('SELECT COUNT(*) FROM %I
-                WHERE created_date = CURRENT_DATE', p_table_name) INTO v_target_count;
+                IF p_table_name != 'fact_price' THEN
+                    EXECUTE format ('SELECT COUNT(*) FROM %I
+                    WHERE created_date = CURRENT_DATE AND last_updated_date IS NULL', p_table_name) 
+                    INTO v_insert_count;
+                
+                    EXECUTE format ('SELECT COUNT(*) FROM %I
+                    WHERE created_date = CURRENT_DATE AND last_updated_date = CURRENT_DATE', p_table_name) 
+                    INTO v_update_count;
+                    
+                ELSE
+                    v_update_count = 0;
+                    
+                    EXECUTE format ('SELECT COUNT(*) FROM %I
+                    WHERE created_date = CURRENT_DATE', p_table_name) 
+                    INTO v_insert_count;
+                    
+                END IF;
 
-                IF v_staging_count = v_target_count THEN
+                IF v_staging_count = v_insert_count + v_update_count THEN
                     v_result := 'PASS';
                 ELSE
                     v_result := 'FAIL';
                 END IF;
 
-                INSERT INTO etl_audit_log (table_name, staging_count, target_count, status)
-                VALUES (p_table_name, v_staging_count, v_target_count, v_result);
+                INSERT INTO etl_audit_log (table_name, staging_count, insert_count, update_count, status)
+                VALUES (p_table_name, v_staging_count, v_insert_count, v_update_count, v_result);
                 
             END $$
             '''
@@ -174,9 +191,10 @@ def extract_transform():
         source_table = pd.read_excel('incremental load/ebay.xlsx')
         source_table = source_table.copy()
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
-        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=8)]
-        # This design fetches data from any past 'modified date' in the source data, but in reality
-        # it should fetch all data from the source system including historical data since it is a first load.
+        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
+        # This design fetches data from any past 'modified date' in the source data, in this case,
+        # data modified yesterday, but in reality it should fetch all data from the source system
+        # including historical data since it is a first load.
 
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
