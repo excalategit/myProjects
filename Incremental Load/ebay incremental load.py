@@ -8,10 +8,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 # Defining the function that will perform the INSERT action when called by the ETL stages.
 
-
-def insert(insert_query, dataset, table_name):
+def insert(insert_query, dataset, table_name, column_name):
     connection = None
     db_user = os.getenv('DB_USER')
     db_password = os.getenv('DB_PASSWORD')
@@ -23,12 +23,20 @@ def insert(insert_query, dataset, table_name):
                 dbname='Destination',
                 user=db_user,
                 password=db_password,
-                port=5432) as connection:
+                port=5432,
+                options='-c search_path=ebay') as connection:
 
             with connection.cursor() as cursor:
                 psycopg2.extras.execute_batch(cursor, insert_query, dataset)
                 print(f'Rows {loaded_rows} to {len(dataset)} loaded successfully for {table_name}')
                 loaded_rows += len(dataset)
+
+                call_procedure = ''' 
+                call audit_table(%s, %s)
+                '''
+
+                cursor.execute(call_procedure, (table_name, column_name,))
+                print('Audit table updated.')
 
     except Exception as error:
         print(f'Loading failed for {table_name}: {error}')
@@ -49,14 +57,16 @@ def extract_transform():
 
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
         source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
-        # This fetches only data that was modified yesterday (incremental).
+        # This design allows customization of modified date e.g. allowing only data
+        # modified yesterday to be fetched (incremental).
+
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
         source_table['review_id'] = source_table['review_id'].str.split(',')
         source_table['review_title'] = source_table['review_title'].str.split(',')
-        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
         source_table['created_date'] = datetime.today().date()
-        # Best practice is to add a created date column to staging for audit purposes.
+
+        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
         source_table.to_sql('stg_product_review', engine, index=False, if_exists='append')
 
         return print('Extraction to staging completed.')
@@ -65,10 +75,11 @@ def extract_transform():
         print(f'Extraction to staging failed: {error}')
 
 
-# Defining the function that loads the transformed data to the dimension tables.
+# Defining the functions that loads the transformed data to the dimension tables and updates the audit table.
 
 def load_dim_product():
     table_name = 'dim_product'
+    column_name = 'product_id'
 
     try:
         engine = create_engine('postgresql:///Destination')
@@ -84,7 +95,7 @@ def load_dim_product():
         product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
         product = product.to_dict('records')
 
-        insert_query = '''INSERT into ebay.dim_product (
+        insert_query = '''INSERT into dim_product (
         product_id,
         product_name,
         category,
@@ -105,17 +116,18 @@ def load_dim_product():
         %(rating_count)s
         )
         ON CONFLICT (product_id)
-        DO UPDATE SET
-        product_name = excluded.product_name,
-        category = excluded.category,
-        about_product = excluded.about_product,
-        img_link = excluded.img_link,
-        product_link = excluded.product_link,
-        rating = excluded.rating,
-        rating_count = excluded.rating_count
+        DO UPDATE 
+        SET product_name = excluded.product_name,
+            category = excluded.category,
+            about_product = excluded.about_product,
+            img_link = excluded.img_link,
+            product_link = excluded.product_link,
+            rating = excluded.rating,
+            rating_count = excluded.rating_count,
+            last_updated_date = CURRENT_DATE
         '''
 
-        insert(insert_query, product, table_name)
+        insert(insert_query, product, table_name, column_name)
         return None
 
     except Exception as error:
@@ -124,6 +136,7 @@ def load_dim_product():
 
 def load_dim_user():
     table_name = 'dim_user'
+    column_name = 'user_id'
 
     try:
         engine = create_engine('postgresql:///Destination')
@@ -137,7 +150,7 @@ def load_dim_user():
         user = user.drop_duplicates()
         user = user.to_dict('records')
 
-        insert_query = '''INSERT into ebay.dim_user (
+        insert_query = '''INSERT into dim_user (
         user_id,
         user_name
         ) 
@@ -146,11 +159,12 @@ def load_dim_user():
         %(user_name)s
         )
         ON CONFLICT (user_id)
-        DO UPDATE SET
-        user_name = excluded.user_name
+        DO UPDATE 
+        SET user_name = excluded.user_name,
+            last_updated_date = CURRENT_DATE
         '''
 
-        insert(insert_query, user, table_name)
+        insert(insert_query, user, table_name, column_name)
         return None
 
     except Exception as error:
@@ -159,6 +173,7 @@ def load_dim_user():
 
 def load_dim_review():
     table_name = 'dim_review'
+    column_name = 'review_id'
 
     try:
         engine = create_engine('postgresql:///Destination')
@@ -173,7 +188,7 @@ def load_dim_review():
         review = review.drop_duplicates(subset=['review_id'], keep='first')
         review = review.to_dict('records')
 
-        insert_query = '''INSERT into ebay.dim_review (
+        insert_query = '''INSERT into dim_review (
         review_id,
         review_content
         )
@@ -182,11 +197,12 @@ def load_dim_review():
         %(review_content)s
         )
         ON CONFLICT (review_id)
-        DO UPDATE SET
-        review_content = excluded.review_content
+        DO UPDATE 
+        SET review_content = excluded.review_content,
+            last_updated_date = CURRENT_DATE
         '''
 
-        insert(insert_query, review, table_name)
+        insert(insert_query, review, table_name, column_name)
         return None
 
     except Exception as error:
@@ -252,11 +268,12 @@ def load_surrogate_keys():
             connection.close()
 
 
-# Defining the function that transforms and loads data from staging to the fact table together with
-# all surrogate keys.
+# Defining the function that transforms and loads data from staging to the fact table
+# together with all surrogate keys.
 
 def transform_load_fact_table():
-    table_name = 'fact_table'
+    table_name = 'fact_price'
+    column_name = 'product_key'
 
     try:
         engine = create_engine('postgresql:///Destination')
@@ -275,7 +292,7 @@ def transform_load_fact_table():
         fact = fact.drop_duplicates(subset=['product_key'], keep='first')
         fact = fact.to_dict('records')
 
-        insert_query = '''INSERT into ebay.fact_price (
+        insert_query = '''INSERT into fact_price (
         "actual_price (PLN)",
         "discounted_price (PLN)",
         discount_percentage,
@@ -288,7 +305,7 @@ def transform_load_fact_table():
         %(product_key)s
         )'''
 
-        insert(insert_query, fact, table_name)
+        insert(insert_query, fact, table_name, column_name)
         return None
 
     except Exception as error:
