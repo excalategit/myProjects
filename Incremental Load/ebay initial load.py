@@ -91,7 +91,9 @@ try:
 
             cursor.execute(create_etl_audit_table)
 
-            # Creating the stored procedure that updates the audit table when called.
+            # Creating the stored procedure that updates the audit table when called. To derive the number
+            # of rows updated simply use the same condition defined at the ON CONFLICT step of UPSERT
+            # in this case setting last_updated_date column to current date.
             create_procedure = '''
             CREATE OR REPLACE PROCEDURE audit_table(p_table_name text, p_column_name text)
             LANGUAGE plpgsql
@@ -112,7 +114,7 @@ try:
                     INTO v_insert_count;
                 
                     EXECUTE format ('SELECT COUNT(*) FROM %I
-                    WHERE created_date = CURRENT_DATE AND last_updated_date = CURRENT_DATE', p_table_name) 
+                    WHERE last_updated_date = CURRENT_DATE', p_table_name) 
                     INTO v_update_count;
                     
                 ELSE
@@ -171,6 +173,8 @@ def insert(insert_query, dataset, table_name, column_name):
                 '''
 
                 cursor.execute(call_procedure, (table_name, column_name,))
+                # Reminder that arguments are passed to placeholders in psycopg2 using
+                # tuples or lists, even if it is only one value.
                 print('Audit table updated.')
 
     except Exception as error:
