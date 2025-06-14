@@ -5,6 +5,7 @@ import psycopg2
 from datetime import datetime
 from datetime import timedelta
 from dotenv import load_dotenv
+from time import time
 
 load_dotenv()
 
@@ -27,8 +28,10 @@ def insert(insert_query, dataset, table_name, column_name):
                 options='-c search_path=ebay') as connection:
 
             with connection.cursor() as cursor:
+                t1 = time()
                 psycopg2.extras.execute_batch(cursor, insert_query, dataset)
-                print(f'Rows {loaded_rows} to {len(dataset)} loaded successfully for {table_name}')
+                t2 = time()
+                print(f'Rows {loaded_rows} to {len(dataset)} loaded successfully for {table_name} in {t2-t1}s')
                 loaded_rows += len(dataset)
 
                 call_procedure = ''' 
