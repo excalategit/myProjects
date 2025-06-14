@@ -71,6 +71,7 @@ try:
     insert_count INT64,
     update_count INT64,
     status STRING,
+    load_time NUMERIC,
     log_date DATE DEFAULT CURRENT_DATE
     )'''
     query_job = client.query(etl_audit_log)
@@ -123,10 +124,45 @@ def extract_transform():
         print(f'Extraction to staging failed: {error}')
 
 
+def insert(project_id, dataset_id, dataframe, table_name, table_name_bq, column_name):
+    try:
+        t1 = time()
+        to_gbq(dataframe, f'{dataset_id}.{table_name}', project_id=project_id, if_exists='fail')
+        t2 = time()
+
+        load_time = t2-t1
+
+        print(f'Rows 0 to {len(dataframe)} loaded successfully for {table_name} in {load_time}s')
+
+        try:
+            call_procedure = ''' 
+                    call `my-dw-project-01.bq_upload.audit_table`(@table_name_bq, @column_name, @load_time)
+                    '''
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter('table_name_bq', 'STRING', table_name_bq),
+                    bigquery.ScalarQueryParameter('column_name', 'STRING', column_name),
+                    bigquery.ScalarQueryParameter('load_time', 'NUMERIC', load_time)
+                ],
+            )
+            query_job = client.query(call_procedure, job_config)
+            query_job.result()
+
+            print('Audit table updated.')
+
+        except Exception as error:
+            print(f'Loading failed for audit table: {error}')
+
+    except Exception as error:
+        print(f'Loading failed for {table_name}: {error}')
+
+
 def load_dim_product():
     project_id = 'my-dw-project-01'
     dataset_id = 'bq_upload'
     table_name = 'dim_product'
+    table_name_bq = 'my-dw-project-01.bq_upload.dim_product'
     column_name = 'product_id'
 
     try:
@@ -136,29 +172,17 @@ def load_dim_product():
         product['rating_count'] = product['rating_count'].fillna(1)
         product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
 
-        t1 = time()
-        to_gbq(product, f'{dataset_id}.{table_name}', project_id=project_id, if_exists='fail')
-        t2 = time()
-
-        print(f'Rows 0 to {len(product)} loaded successfully for {table_name} in {t2-t1}s')
-
-        call_procedure = ''' 
-        call `my-dw-project-01.bq_upload.audit_table`('my-dw-project-01.bq_upload.dim_product', 'product_id')
-        '''
-
-        query_job = client.query(call_procedure)
-        query_job.result()
-
-        return print('Audit table updated.')
+        insert(project_id, dataset_id, product, table_name, table_name_bq, column_name)
 
     except Exception as error:
-        print(f'Loading failed for {table_name}: {error}')
+        print(f'Transformation stage failed for {table_name}: {error}')
 
 
 def load_dim_user():
     project_id = 'my-dw-project-01'
     dataset_id = 'bq_upload'
     table_name = 'dim_user'
+    table_name_bq = 'my-dw-project-01.bq_upload.dim_user'
     column_name = 'user_id'
 
     try:
@@ -166,29 +190,17 @@ def load_dim_user():
         user = du[['user_id', 'user_name']].copy()
         user = user.drop_duplicates()
 
-        t1 = time()
-        to_gbq(user, f'{dataset_id}.{table_name}', project_id=project_id, if_exists='fail')
-        t2 = time()
-
-        print(f'Rows 0 to {len(user)} loaded successfully for {table_name} in {t2-t1}s')
-
-        call_procedure = ''' 
-        call `my-dw-project-01.bq_upload.audit_table`('my-dw-project-01.bq_upload.dim_user', 'user_id')
-        '''
-
-        query_job = client.query(call_procedure)
-        query_job.result()
-
-        return print('Audit table updated.')
+        insert(project_id, dataset_id, user, table_name, table_name_bq, column_name)
 
     except Exception as error:
-        print(f'Loading failed for {table_name}: {error}')
+        print(f'Transformation stage failed for {table_name}: {error}')
 
 
 def load_dim_review():
     project_id = 'my-dw-project-01'
     dataset_id = 'bq_upload'
     table_name = 'dim_review'
+    table_name_bq = 'my-dw-project-01.bq_upload.dim_review'
     column_name = 'review_id'
 
     try:
@@ -197,23 +209,10 @@ def load_dim_review():
         review = review.rename(columns={'review_title': 'review_content'})
         review = review.drop_duplicates(subset=['review_id'], keep='first')
 
-        t1 = time()
-        to_gbq(review, f'{dataset_id}.{table_name}', project_id=project_id, if_exists='fail')
-        t2 = time()
-
-        print(f'Rows 0 to {len(review)} loaded successfully for {table_name} in {t2-t1}s')
-
-        call_procedure = ''' 
-        call `my-dw-project-01.bq_upload.audit_table`('my-dw-project-01.bq_upload.dim_review', 'review_id')
-        '''
-
-        query_job = client.query(call_procedure)
-        query_job.result()
-
-        return print('Audit table updated.')
+        insert(project_id, dataset_id, review, table_name, table_name_bq, column_name)
 
     except Exception as error:
-        print(f'Loading failed for {table_name}: {error}')
+        print(f'Transformation stage failed for {table_name}: {error}')
 
 
 def load_surrogate_keys():
@@ -264,6 +263,7 @@ def transform_load_fact_table():
     project_id = 'my-dw-project-01'
     dataset_id = 'bq_upload'
     table_name = 'fact_price'
+    table_name_bq = 'my-dw-project-01.bq_upload.fact_price'
     column_name = 'product_key'
 
     try:
@@ -280,23 +280,10 @@ def transform_load_fact_table():
         fact = fact.rename(columns={'actual_price': 'actual_price_pln'})
         fact = fact.drop_duplicates(subset=['product_key'], keep='first')
 
-        t1 = time()
-        to_gbq(fact, f'{dataset_id}.{table_name}', project_id=project_id, if_exists='fail')
-        t2 = time()
-
-        print(f'Rows 0 to {len(fact)} loaded successfully for {table_name} in {t2-t1}s')
-
-        call_procedure = ''' 
-        call `my-dw-project-01.bq_upload.audit_table`('my-dw-project-01.bq_upload.fact_price', 'product_key')
-        '''
-
-        query_job = client.query(call_procedure)
-        query_job.result()
-
-        return print('Audit table updated.')
+        insert(project_id, dataset_id, fact, table_name, table_name_bq, column_name)
 
     except Exception as error:
-        print(f'Loading failed for {table_name}: {error}')
+        print(f'Transformation stage failed for {table_name}: {error}')
 
 
 extract_transform()
