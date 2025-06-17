@@ -42,7 +42,7 @@ try:
     CREATE TABLE IF NOT EXISTS my-dw-project-01.bq_upload.dim_review (
     review_key STRING DEFAULT GENERATE_UUID(),
     review_id STRING,
-    review_content STRING,
+    review_title STRING,
     user_key STRING,
     product_key STRING,
     created_date DATE DEFAULT CURRENT_DATE,
@@ -54,8 +54,8 @@ try:
     fact_price = '''
     CREATE TABLE IF NOT EXISTS my-dw-project-01.bq_upload.fact_price (
     price_key STRING DEFAULT GENERATE_UUID(),
-    actual_price_PLN FLOAT64,
-    discounted_price_PLN FLOAT64,
+    actual_price FLOAT64,
+    discounted_price FLOAT64,
     discount_percentage STRING,
     product_key STRING,
     created_date DATE DEFAULT CURRENT_DATE
@@ -83,8 +83,6 @@ except Exception as error:
 
 def extract_transform():
     project_id = 'my-dw-project-01'
-    dataset_id = 'bq_upload'
-    table_name = 'stg_bq_project'
 
     try:
         engine = create_engine('postgresql:///Destination')
@@ -92,7 +90,7 @@ def extract_transform():
         source_table = pd.read_sql('bq_source_data', engine)
         source_table = source_table.copy()
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
-        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
+        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=4)]
         # This design fetches data from any past 'modified date' in the source data, in this case,
         # data modified yesterday, but in reality it should fetch all data from the source system
         # including historical data since it is a first load.
@@ -103,9 +101,18 @@ def extract_transform():
         source_table['review_title'] = source_table['review_title'].str.split(',')
         source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
 
+        source_table['rating_count'] = source_table['rating_count'].fillna(1)
+        source_table['discounted_price'] = source_table['discounted_price'].str.replace('₹', '')
+        source_table['discounted_price'] = source_table['discounted_price'].str.replace(',', '').astype(float)
+        source_table['actual_price'] = source_table['actual_price'].str.replace('₹', '')
+        source_table['actual_price'] = source_table['actual_price'].str.replace(',', '').astype(float)
+
+        # source_table = source_table.rename(columns={'review_title': 'review_content'})
+        # source_table = source_table.rename(columns={'discounted_price': 'discounted_price_pln'})
+        # source_table = source_table.rename(columns={'actual_price': 'actual_price_pln'})
         source_table['created_date'] = datetime.today().date()
 
-        to_gbq(source_table, f'{dataset_id}.{table_name}', project_id=project_id, if_exists='fail')
+        to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project', project_id=project_id, if_exists='fail')
 
         # Addition of surrogate key columns to staging.
 
@@ -169,7 +176,6 @@ def load_dim_product():
         dp = read_gbq('my-dw-project-01.bq_upload.stg_bq_project', 'my-dw-project-01')
         product = dp[['product_id', 'product_name', 'category', 'about_product', 'img_link', 'product_link',
                       'rating', 'rating_count']].copy()
-        product['rating_count'] = product['rating_count'].fillna(1)
         product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
 
         insert(project_id, dataset_id, product, table_name, table_name_bq, column_name)
@@ -206,7 +212,6 @@ def load_dim_review():
     try:
         dr = read_gbq('my-dw-project-01.bq_upload.stg_bq_project', 'my-dw-project-01')
         review = dr[['review_id', 'review_title']].copy()
-        review = review.rename(columns={'review_title': 'review_content'})
         review = review.drop_duplicates(subset=['review_id'], keep='first')
 
         insert(project_id, dataset_id, review, table_name, table_name_bq, column_name)
@@ -229,12 +234,6 @@ def load_surrogate_keys():
         FROM my-dw-project-01.bq_upload.dim_user AS u WHERE s.user_id = u.user_id AND
         s.user_name = u.user_name'''
         query_job = client.query(user_key)
-        query_job.result()
-
-        review_key = '''UPDATE my-dw-project-01.bq_upload.stg_bq_project AS s SET review_key = r.review_key
-        FROM my-dw-project-01.bq_upload.dim_review AS r WHERE s.review_id = r.review_id AND
-        s.review_title = r.review_content'''
-        query_job = client.query(review_key)
         query_job.result()
 
         # Loading dim_product table's surrogate keys from staging to dim_review.
@@ -270,14 +269,6 @@ def transform_load_fact_table():
         dg = read_gbq('bq_upload.stg_bq_project', 'my-dw-project-01')
         fact = dg[['discounted_price', 'actual_price', 'discount_percentage',
                    'product_key']].copy()
-
-        fact['discounted_price'] = fact['discounted_price'].str.replace('₹', '')
-        fact['discounted_price'] = fact['discounted_price'].str.replace(',', '').astype(float)
-        fact['actual_price'] = fact['actual_price'].str.replace('₹', '')
-        fact['actual_price'] = fact['actual_price'].str.replace(',', '').astype(float)
-
-        fact = fact.rename(columns={'discounted_price': 'discounted_price_pln'})
-        fact = fact.rename(columns={'actual_price': 'actual_price_pln'})
         fact = fact.drop_duplicates(subset=['product_key'], keep='first')
 
         insert(project_id, dataset_id, fact, table_name, table_name_bq, column_name)
