@@ -11,10 +11,6 @@ client = bigquery.Client()
 
 # Defining the function that extracts and transforms source data to staging.
 def extract_transform():
-    project_id = 'my-dw-project-01'
-    dataset_id = 'bq_upload'
-    table_name = 'stg_bq_project'
-
     try:
         engine = create_engine('postgresql:///Destination')
 
@@ -44,7 +40,8 @@ def extract_transform():
 
         source_table['created_date'] = datetime.today().date()
 
-        to_gbq(source_table, f'{dataset_id}.{table_name}', project_id=project_id, if_exists='append')
+        to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project',
+               project_id='my-dw-project-01', if_exists='append')
 
         return print('Extraction to staging completed.')
 
@@ -189,29 +186,46 @@ def load_surrogate_keys():
     try:
         # Loading surrogate keys from dimension tables to staging.
         product_key = '''UPDATE my-dw-project-01.bq_upload.stg_bq_project AS s SET product_key = p.product_key
-        FROM my-dw-project-01.bq_upload.dim_product AS p WHERE s.product_id = p.product_id AND
-        s.product_name = p.product_name'''
+        FROM my-dw-project-01.bq_upload.dim_product AS p WHERE s.created_date = CURRENT_DATE AND 
+        s.product_id = p.product_id AND s.product_name = p.product_name'''
         query_job = client.query(product_key)
         query_job.result()
 
         user_key = '''UPDATE my-dw-project-01.bq_upload.stg_bq_project AS s SET user_key = u.user_key
-        FROM my-dw-project-01.bq_upload.dim_user AS u WHERE s.user_id = u.user_id AND
-        s.user_name = u.user_name'''
+        FROM my-dw-project-01.bq_upload.dim_user AS u WHERE s.created_date = CURRENT_DATE AND 
+        s.user_id = u.user_id AND s.user_name = u.user_name'''
         query_job = client.query(user_key)
         query_job.result()
+
+        # Loading surrogate keys from staging to dim_review.
+        # BigQuery unlike Postgres requires the source table to have unique records based on
+        # the column used for comparison i.e. the source_table cannot contain multiple
+        # rows with the same id while the target_table has one row with that same id, which is the
+        # case here. The solution employed here creates a subset of staging data containing
+        # unique review_ids, again using Window Functions.
 
         # Loading dim_product table's surrogate keys from staging to dim_review.
 
         load_prod_review = '''UPDATE my-dw-project-01.bq_upload.dim_review r SET product_key = s.product_key
-        FROM my-dw-project-01.bq_upload.stg_bq_project s
+        FROM (
+            SELECT * EXCEPT(row_num) FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
+                FROM my-dw-project-01.bq_upload.stg_bq_project
+                ) WHERE row_num = 1
+            ) AS s
         WHERE r.review_id = s.review_id'''
         query_job = client.query(load_prod_review)
         query_job.result()
 
         # Loading dim_user table's surrogate keys from staging to dim_review.
 
-        load_user_review = '''UPDATE my-dw-project-01.bq_upload.dim_review r SET user_key = s.user_key
-        FROM my-dw-project-01.bq_upload.stg_bq_project s
+        load_user_review = '''UPDATE my-dw-project-01.bq_upload.dim_review AS r SET user_key = s.user_key
+        FROM (
+            SELECT * EXCEPT(row_num) FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
+                FROM my-dw-project-01.bq_upload.stg_bq_project
+                ) WHERE row_num = 1
+            ) AS s
         WHERE r.review_id = s.review_id'''
         query_job = client.query(load_user_review)
         query_job.result()
@@ -235,7 +249,7 @@ def transform_load_fact_table():
                     MERGE `my-dw-project-01.bq_upload.fact_price` f
                     USING (
                         SELECT * EXCEPT(row_num) FROM (
-                            SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
+                            SELECT *, ROW_NUMBER() OVER (PARTITION BY product_key ORDER BY created_date DESC) AS row_num
                             FROM `my-dw-project-01.bq_upload.stg_bq_project`
                             WHERE created_date = CURRENT_DATE
                         )

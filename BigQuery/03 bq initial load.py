@@ -82,15 +82,13 @@ except Exception as error:
 
 
 def extract_transform():
-    project_id = 'my-dw-project-01'
-
     try:
         engine = create_engine('postgresql:///Destination')
 
         source_table = pd.read_sql('bq_source_data', engine)
         source_table = source_table.copy()
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
-        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=4)]
+        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
         # This design fetches data from any past 'modified date' in the source data, in this case,
         # data modified yesterday, but in reality it should fetch all data from the source system
         # including historical data since it is a first load.
@@ -112,14 +110,14 @@ def extract_transform():
         # source_table = source_table.rename(columns={'actual_price': 'actual_price_pln'})
         source_table['created_date'] = datetime.today().date()
 
-        to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project', project_id=project_id, if_exists='fail')
+        to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project',
+               project_id='my-dw-project-01', if_exists='fail')
 
         # Addition of surrogate key columns to staging.
 
         staging_update = '''ALTER TABLE my-dw-project-01.bq_upload.stg_bq_project
         ADD COLUMN product_key STRING,
-        ADD COLUMN user_key STRING,
-        ADD COLUMN review_key STRING
+        ADD COLUMN user_key STRING
         '''
 
         query_job = client.query(staging_update)

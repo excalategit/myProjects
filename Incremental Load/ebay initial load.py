@@ -223,8 +223,7 @@ def extract_transform():
             with connection.cursor() as cursor:
                 staging_update = '''ALTER TABLE stg_product_review
                 ADD COLUMN product_key INT,
-                ADD COLUMN user_key INT,
-                ADD COLUMN review_key INT
+                ADD COLUMN user_key INT
                 '''
 
                 cursor.execute(staging_update)
@@ -367,11 +366,6 @@ def load_surrogate_keys():
                 FROM ebay.dim_user AS u WHERE s.user_id = u.user_id AND
                 s.user_name = u.user_name'''
                 cursor.execute(user_key)
-
-                review_key = '''UPDATE stg_product_review AS s SET review_key = r.review_key
-                FROM ebay.dim_review AS r WHERE s.review_id = r.review_id AND
-                s.review_title = r.review_content'''
-                cursor.execute(review_key)
 
                 # Loading dim_product table's surrogate keys from staging to dim_review.
 

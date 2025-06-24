@@ -1,6 +1,5 @@
 import pandas as pd
 from sqlalchemy import create_engine
-from pandas_gbq import read_gbq
 from pandas_gbq import to_gbq
 from google.cloud import bigquery
 from datetime import datetime
@@ -11,7 +10,6 @@ client = bigquery.Client()
 
 
 # Defining the function that extracts and transforms source data to staging.
-
 def extract_transform():
     project_id = 'my-dw-project-01'
 
@@ -22,9 +20,9 @@ def extract_transform():
         source_table = source_table.copy()
 
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
-        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=5)]
-        # This design allows customization of the initial load date based on the modified date column in
-        # the dataset.
+        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=0)]
+        # This design allows customization of modified date e.g. allowing only data
+        # modified yesterday to be fetched (incremental).
 
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
@@ -44,7 +42,7 @@ def extract_transform():
 
         source_table['created_date'] = source_table['modified_date'] + timedelta(days=1)
 
-        to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project1', project_id=project_id, if_exists='fail')
+        to_gbq(source_table, 'my-dw-project-01.bq_upload_test.stg_bq_test', project_id=project_id, if_exists='append')
 
         return print('Extraction to staging completed.')
 
@@ -52,30 +50,47 @@ def extract_transform():
         print(f'Extraction to staging failed: {error}')
 
 
-def load_initial():
-    project_id = 'my-dw-project-01'
+def load_incremental():
     table_name = 'dim_product'
-    table_name_bq = 'my-dw-project-01.bq_upload.dim_product'
+    table_name_bq = 'my-dw-project-01.bq_upload_test.dim_product'
     column_name = 'product_id'
 
     try:
-        dp = read_gbq('my-dw-project-01.bq_upload.stg_bq_project1', 'my-dw-project-01')
-        product = dp[['product_id', 'product_name', 'category', 'about_product', 'img_link', 'product_link',
-                      'rating', 'rating_count', 'created_date']].copy()
-        product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
-
+        insert_query = """
+        MERGE `my-dw-project-01.bq_upload_test.dim_product` p
+        USING (
+            SELECT * EXCEPT(row_num) FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_date DESC) AS row_num
+                FROM `my-dw-project-01.bq_upload_test.stg_bq_test`
+                WHERE modified_date = (select max(modified_date) from `my-dw-project-01.bq_upload_test.stg_bq_test`)
+            ) WHERE row_num = 1) s
+        ON p.product_id = s.product_id
+        WHEN MATCHED THEN
+          UPDATE SET p.product_name = s.product_name, p.category = s.category, p.about_product = s.about_product,
+          p.img_link = s.img_link, p.product_link = s.product_link, p.rating = s.rating, 
+          p.rating_count = s.rating_count, p.created_date = s.created_date, p.last_updated_date = s.created_date
+        WHEN NOT MATCHED THEN
+          INSERT (product_id, product_name, category, about_product, img_link, product_link,
+          rating, rating_count, created_date)
+          VALUES (s.product_id, s.product_name, s.category, s.about_product, s.img_link, s.product_link,
+          s.rating, s.rating_count, s.created_date)
+        """
+        # The window function used here groups staging data by product_id, orders each group by created_date,
+        # and assigns row numbers for each group. Next the top-most product_id of each group is selected.
+        # This ensures that unique and latest incarnations of product_ids are selected ready for merge (upsert).
         try:
             t1 = time()
-            to_gbq(product, 'my-dw-project-01.bq_upload.dim_product', project_id=project_id, if_exists='fail')
+            query_job = client.query(insert_query)
+            query_job.result()
             t2 = time()
 
             load_time = t2 - t1
 
-            print(f'Rows 0 to {len(product)} loaded successfully for {table_name} in {load_time}s')
+            print(f'Rows loaded successfully for {table_name} in {load_time}s')
 
             try:
                 call_procedure = ''' 
-                        call `my-dw-project-01.bq_upload.audit_table_incr`(@table_name_bq, @column_name, @load_time)
+                        call `my-dw-project-01.bq_upload_test.audit_table_test`(@table_name_bq, @column_name, @load_time)
                         '''
 
                 job_config = bigquery.QueryJobConfig(
@@ -97,9 +112,9 @@ def load_initial():
             print(f'Loading failed for {table_name}: {error}')
 
     except Exception as error:
-        print(f'Transformation stage failed for {table_name}: {error}')
+        print(f'Potential issue with transformation step: {error}')
 
 
 extract_transform()
 
-load_initial()
+load_incremental()
