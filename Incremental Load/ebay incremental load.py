@@ -242,11 +242,6 @@ def load_surrogate_keys():
                 s.user_id = u.user_id AND s.user_name = u.user_name'''
                 cursor.execute(user_key)
 
-                review_key = '''UPDATE stg_product_review AS s SET review_key = r.review_key 
-                FROM ebay.dim_review AS r WHERE s.created_date = CURRENT_DATE AND 
-                s.review_id = r.review_id AND s.review_title = r.review_content'''
-                cursor.execute(review_key)
-
                 # Loading dim_product table's surrogate keys from staging to dim_review.
 
                 load_prod_review = '''UPDATE ebay.dim_review r SET product_key = sa.product_key
