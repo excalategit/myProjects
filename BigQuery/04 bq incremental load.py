@@ -99,8 +99,8 @@ def load_dim_product():
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_date DESC) AS row_num
                 FROM `my-dw-project-01.bq_upload.stg_bq_project`
                 WHERE created_date = CURRENT_DATE
-            )
-        WHERE row_num = 1) s
+                ) WHERE row_num = 1
+            ) AS s
         ON p.product_id = s.product_id
         WHEN MATCHED THEN
           UPDATE SET p.product_name = s.product_name, p.category = s.category, p.about_product = s.about_product,
@@ -135,8 +135,8 @@ def load_dim_user():
                     SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_date DESC) AS row_num
                     FROM `my-dw-project-01.bq_upload.stg_bq_project`
                     WHERE created_date = CURRENT_DATE
-                )
-            WHERE row_num = 1) s
+                    ) WHERE row_num = 1
+                ) AS s
             ON u.user_id = s.user_id
             WHEN MATCHED THEN
               UPDATE SET u.user_name = s.user_name, u.last_updated_date = CURRENT_DATE
@@ -164,8 +164,8 @@ def load_dim_review():
                         SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
                         FROM `my-dw-project-01.bq_upload.stg_bq_project`
                         WHERE created_date = CURRENT_DATE
-                    )
-                WHERE row_num = 1) s
+                        ) WHERE row_num = 1
+                    ) AS s
                 ON r.review_id = s.review_id
                 WHEN MATCHED THEN
                   UPDATE SET r.review_title = s.review_title, r.last_updated_date = CURRENT_DATE
@@ -252,8 +252,8 @@ def transform_load_fact_table():
                             SELECT *, ROW_NUMBER() OVER (PARTITION BY product_key ORDER BY created_date DESC) AS row_num
                             FROM `my-dw-project-01.bq_upload.stg_bq_project`
                             WHERE created_date = CURRENT_DATE
-                        )
-                    WHERE row_num = 1) s
+                            ) WHERE row_num = 1
+                        ) AS s
                     ON f.product_key = s.product_key
                     WHEN MATCHED THEN
                       UPDATE SET f.actual_price = s.actual_price, f.discounted_price = s.discounted_price,
