@@ -129,21 +129,21 @@ def load_dim_user():
 
     try:
         insert_query = """
-            MERGE `my-dw-project-01.bq_upload.dim_user` u
-            USING (
-                SELECT * EXCEPT(row_num) FROM (
-                    SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_date DESC) AS row_num
-                    FROM `my-dw-project-01.bq_upload.stg_bq_project`
-                    WHERE created_date = CURRENT_DATE
-                    ) WHERE row_num = 1
-                ) AS s
-            ON u.user_id = s.user_id
-            WHEN MATCHED THEN
-              UPDATE SET u.user_name = s.user_name, u.last_updated_date = CURRENT_DATE
-            WHEN NOT MATCHED THEN
-              INSERT (user_id, user_name)
-              VALUES (s.user_id, s.user_name)
-            """
+        MERGE `my-dw-project-01.bq_upload.dim_user` u
+        USING (
+            SELECT * EXCEPT(row_num) FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_date DESC) AS row_num
+                FROM `my-dw-project-01.bq_upload.stg_bq_project`
+                WHERE created_date = CURRENT_DATE
+                ) WHERE row_num = 1
+            ) AS s
+        ON u.user_id = s.user_id
+        WHEN MATCHED THEN
+          UPDATE SET u.user_name = s.user_name, u.last_updated_date = CURRENT_DATE
+        WHEN NOT MATCHED THEN
+          INSERT (user_id, user_name)
+          VALUES (s.user_id, s.user_name)
+        """
 
         insert(insert_query, table_name, table_name_bq, column_name)
 
@@ -158,21 +158,21 @@ def load_dim_review():
 
     try:
         insert_query = """
-                MERGE `my-dw-project-01.bq_upload.dim_review` r
-                USING (
-                    SELECT * EXCEPT(row_num) FROM (
-                        SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
-                        FROM `my-dw-project-01.bq_upload.stg_bq_project`
-                        WHERE created_date = CURRENT_DATE
-                        ) WHERE row_num = 1
-                    ) AS s
-                ON r.review_id = s.review_id
-                WHEN MATCHED THEN
-                  UPDATE SET r.review_title = s.review_title, r.last_updated_date = CURRENT_DATE
-                WHEN NOT MATCHED THEN
-                  INSERT (review_id, review_title)
-                  VALUES (s.review_id, s.review_title)
-                """
+        MERGE `my-dw-project-01.bq_upload.dim_review` r
+        USING (
+            SELECT * EXCEPT(row_num) FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
+                FROM `my-dw-project-01.bq_upload.stg_bq_project`
+                WHERE created_date = CURRENT_DATE
+                ) WHERE row_num = 1
+            ) AS s
+        ON r.review_id = s.review_id
+        WHEN MATCHED THEN
+          UPDATE SET r.review_title = s.review_title, r.last_updated_date = CURRENT_DATE
+        WHEN NOT MATCHED THEN
+          INSERT (review_id, review_title)
+          VALUES (s.review_id, s.review_title)
+        """
 
         insert(insert_query, table_name, table_name_bq, column_name)
 
@@ -185,15 +185,19 @@ def load_dim_review():
 def load_surrogate_keys():
     try:
         # Loading surrogate keys from dimension tables to staging.
-        product_key = '''UPDATE my-dw-project-01.bq_upload.stg_bq_project AS s SET product_key = p.product_key
+        product_key = '''
+        UPDATE my-dw-project-01.bq_upload.stg_bq_project AS s SET product_key = p.product_key
         FROM my-dw-project-01.bq_upload.dim_product AS p WHERE s.created_date = CURRENT_DATE AND 
-        s.product_id = p.product_id AND s.product_name = p.product_name'''
+        s.product_id = p.product_id AND s.product_name = p.product_name
+        '''
         query_job = client.query(product_key)
         query_job.result()
 
-        user_key = '''UPDATE my-dw-project-01.bq_upload.stg_bq_project AS s SET user_key = u.user_key
+        user_key = '''
+        UPDATE my-dw-project-01.bq_upload.stg_bq_project AS s SET user_key = u.user_key
         FROM my-dw-project-01.bq_upload.dim_user AS u WHERE s.created_date = CURRENT_DATE AND 
-        s.user_id = u.user_id AND s.user_name = u.user_name'''
+        s.user_id = u.user_id AND s.user_name = u.user_name
+        '''
         query_job = client.query(user_key)
         query_job.result()
 
@@ -206,27 +210,31 @@ def load_surrogate_keys():
 
         # Loading dim_product table's surrogate keys from staging to dim_review.
 
-        load_prod_review = '''UPDATE my-dw-project-01.bq_upload.dim_review r SET product_key = s.product_key
+        load_prod_review = '''
+        UPDATE my-dw-project-01.bq_upload.dim_review r SET product_key = s.product_key
         FROM (
             SELECT * EXCEPT(row_num) FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
                 FROM my-dw-project-01.bq_upload.stg_bq_project
                 ) WHERE row_num = 1
             ) AS s
-        WHERE r.review_id = s.review_id'''
+        WHERE r.review_id = s.review_id
+        '''
         query_job = client.query(load_prod_review)
         query_job.result()
 
         # Loading dim_user table's surrogate keys from staging to dim_review.
 
-        load_user_review = '''UPDATE my-dw-project-01.bq_upload.dim_review AS r SET user_key = s.user_key
+        load_user_review = '''
+        UPDATE my-dw-project-01.bq_upload.dim_review AS r SET user_key = s.user_key
         FROM (
             SELECT * EXCEPT(row_num) FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
                 FROM my-dw-project-01.bq_upload.stg_bq_project
                 ) WHERE row_num = 1
             ) AS s
-        WHERE r.review_id = s.review_id'''
+        WHERE r.review_id = s.review_id
+        '''
         query_job = client.query(load_user_review)
         query_job.result()
 
@@ -238,6 +246,7 @@ def load_surrogate_keys():
 
 # Defining the function that transforms and loads data from staging to the fact table
 # together with all surrogate keys.
+# Note that the fact table does not require UPSERT, only INSERT.
 
 def transform_load_fact_table():
     table_name = 'fact_price'
@@ -246,22 +255,17 @@ def transform_load_fact_table():
 
     try:
         insert_query = """
-                    MERGE `my-dw-project-01.bq_upload.fact_price` f
-                    USING (
-                        SELECT * EXCEPT(row_num) FROM (
-                            SELECT *, ROW_NUMBER() OVER (PARTITION BY product_key ORDER BY created_date DESC) AS row_num
-                            FROM `my-dw-project-01.bq_upload.stg_bq_project`
-                            WHERE created_date = CURRENT_DATE
-                            ) WHERE row_num = 1
-                        ) AS s
-                    ON f.product_key = s.product_key
-                    WHEN MATCHED THEN
-                      UPDATE SET f.actual_price = s.actual_price, f.discounted_price = s.discounted_price,
-                      f.discount_percentage = s.discount_percentage
-                    WHEN NOT MATCHED THEN
-                      INSERT (actual_price, discounted_price, discount_percentage, product_key)
-                      VALUES (s.actual_price, s.discounted_price, s.discount_percentage, s.product_key)
-                    """
+        INSERT INTO `my-dw-project-01.bq_upload.fact_price` 
+        (actual_price, discounted_price, discount_percentage, product_key) (
+            SELECT * EXCEPT(created_date, row_num) FROM (
+                SELECT actual_price, discounted_price, discount_percentage, product_key, 
+                created_date, ROW_NUMBER() 
+                OVER (PARTITION BY product_key ORDER BY created_date DESC) AS row_num
+                FROM `my-dw-project-01.bq_upload.stg_bq_project`
+                WHERE created_date = CURRENT_DATE
+                ) WHERE row_num = 1
+            )
+        """
 
         insert(insert_query, table_name, table_name_bq, column_name)
         return None
