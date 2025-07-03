@@ -268,6 +268,7 @@ def load_surrogate_keys():
 
 # Defining the function that transforms and loads data from staging to the fact table
 # together with all surrogate keys.
+# Note that the fact table does not require UPSERT, only INSERT.
 
 def transform_load_fact_table():
     table_name = 'fact_price'
