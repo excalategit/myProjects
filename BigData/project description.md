@@ -1,6 +1,6 @@
 Project Description
 
-The project showcases a pipeline that fetches data from a GCS bucket, transforms and delivers to BigQuery. The exercise introduced a data lake into my pipeline for the first time and showcases its bigdata implications such as working with blobs, using a separate file for each extraction to the DW, and learning new syntax. The exercise exposed me to the basic design for a bigdata pipeline optimized for daily load.
+The project showcases a pipeline that fetches data from a GCS bucket and delivers to BigQuery. The exercise introduced a data lake into my pipeline for the first time and showcases its bigdata implications such as working with blobs, using a separate file for each extraction to the DW, and learning new syntax. The exercise exposed me to the basic design for a bigdata pipeline optimized for daily load.
 
 Some implications/insights:
 - Data is extracted and loaded to staging in a DW in its raw form without any transformation after which it is transformed and loaded to a cleaned staging table.
