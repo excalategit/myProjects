@@ -5,12 +5,10 @@
 
 import requests
 import pandas as pd
-import os
 from sqlalchemy import create_engine
 import psycopg2
+import os
 from dotenv import load_dotenv
-
-load_dotenv()
 
 prd_url = 'https://fakestoreapi.com/products'
 sale_url = 'https://fakestoreapi.com/carts'
@@ -79,11 +77,12 @@ def user_scraper(user_url):
 
 # Creating a combined staging table from all 3 data sources
 
-
-connection = None
+load_dotenv()
 db_user = os.getenv('DB_USER')
 db_password = os.getenv('DB_PASSWORD')
-    
+
+connection = None
+
 try:
     
     with psycopg2.connect(
@@ -130,8 +129,6 @@ finally:
 # Creating the target tables
 
 connection = None
-db_user = os.getenv('DB_USER')
-db_password = os.getenv('DB_PASSWORD')
     
 try:
     
@@ -248,7 +245,7 @@ def insert(insert_query, dataset):
         if connection is not None:
             connection.close()
 
-# Defining the functions that extracts each table, transforms, and loads to target
+# Defining the functions that extracts each table from staging, transforms, and loads to target
 
 
 def transform_load_dim_product():
