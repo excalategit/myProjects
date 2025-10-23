@@ -12,15 +12,16 @@ utilization but was later discovered to be inefficient as it will not answer bus
 generate a report of products, their reviews, and their corresponding reviewers because there is no relationship between
 the user and review tables. This prompted the creation of a second improved design to address this.
 
-The design here (based on best practice) loads data to a staging table, then first transforms
-and exports dimension data to their respective tables. Next it fetches the surrogate keys from those tables and
-imports them back to the staging table. Finally it transforms and exports fact data together with all 
-surrogate keys to the fact table.
+The design here (based on best practice) first loads data to a staging table, then transforms
+and exports dimension data to their respective tables. Next it fetches the surrogate keys from the dimension tables and
+imports them back to the staging table. Finally it transforms and exports fact data together with all surrogate keys to 
+the fact table.
 
-The method of loading all surrogate keys back to staging in order to populate the fact table is preferred because, now 
-all the data (fact data and surrogate keys) are already in one place, ready for export to the fact table. The alternative
-would involve creating table joins between the fact, staging, and concerned dimension table to fetch the surrogate keys.
+The method of loading all surrogate keys back to staging in order to populate the fact table is preferred because, this 
+way all the data (fact data and surrogate keys) are already in one place, ready for export to the fact table. The 
+alternative would involve creating table joins between the fact, staging, and concerned dimension tables in order to 
+fetch surrogate keys.
 
-Note that this design sometimes require some transformation to be done on the data in staging before exporting to 
-dimension tables. This is because at the step where surrogate keys are loaded back to staging, the action is based on a
-comparison between staging and dimension table data which will fail if one table is transformed and the other not.
+Note that this design requires some transformation to be done on the data in staging before exporting to dimension 
+tables. This is because at the step where surrogate keys are loaded back to staging, the action is based on a comparison
+between staging and dimension table data which will fail if one table is transformed and the other not.
