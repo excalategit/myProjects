@@ -296,7 +296,7 @@ def load_surrogate_keys():
 
                 # Loading surrogate keys from staging table to join table.
                 load_to_bridge = '''INSERT INTO amazon.product_user_join (product_key, user_key)
-                SELECT product_key, user_key
+                SELECT DISTINCT product_key, user_key
                 FROM stg_amazon_sales_report'''
                 cursor.execute(load_to_bridge)
 
