@@ -21,6 +21,9 @@ def extract_transform():
         # Remove comma-separated values
         source_table['Genre'] = source_table['Genre'].str.split(',')
         source_table = source_table.explode('Genre')
+        # It good practice to strip the exploded column, this removes whitespaces that can create fake duplicates.
+        # For example 'Drama' and ' Drama' won't be detected as duplicates and will cause issues later in the pipeline.
+        source_table['Genre'] = source_table['Genre'].str.strip()
 
         # Address multiple columns of the same attribute
         source_table = pd.melt(source_table,
@@ -37,7 +40,7 @@ def extract_transform():
         schema = {
             'Poster_Link': 'string',
             'Series_Title': 'string',
-            'Released_Year': 'string',
+            'Released_Year': 'Int64',
             'Certificate': 'string',
             'Runtime': 'string',
             'Genre': 'string',
@@ -49,17 +52,9 @@ def extract_transform():
             'Gross': 'Int64'
         }
 
-        # Removing commas from the Gross column
+        # The Gross column is currently saved as a string data type, since we intend to convert it to
+        # an integer any commas must first be removed, otherwise it will throw an error.
         source_table['Gross'] = source_table['Gross'].str.replace(',', '')
-
-        # Removing whitespaces from Genre column
-        source_table['Genre'] = source_table['Genre'].str.strip()
-
-        # The next step is to fill empty values with default fills. When working with large datasets
-        # it's more efficient to groups like-data types and apply the fill to the whole group.
-        # Consequently, we need to first define/convert all columns to their expected data types. This code
-        # design combines this data cleaning step (fill nulls) and the next data validation step (checking that
-        # values under a column all fit the column's data type and defining what to do if not).
 
         for col, dtype in schema.items():
             if dtype == 'Int64':
@@ -79,7 +74,7 @@ def extract_transform():
         source_table[str_cols] = source_table[str_cols].fillna('NA')
         source_table[bool_cols] = source_table[bool_cols].fillna(False)
 
-        # Remove duplicated rows
+        # Remove any duplicated rows
         source_table = source_table.drop_duplicates()
 
         # For every record where it shows NaN, NaT, replace with None. This ensures that
