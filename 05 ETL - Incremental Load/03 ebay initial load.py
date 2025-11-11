@@ -8,7 +8,61 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Creating the fact, dimension and audit tables.
+# Defining the function that extracts and transforms source data to staging.
+def extract_transform():
+    connection = None
+
+    try:
+        engine = create_engine('postgresql:///Destination')
+
+        source_table = pd.read_excel('incremental load/ebay.xlsx')
+        source_table = source_table.copy()
+        # This design fetches data from any past 'modified date' in the source data, in this case,
+        # data modified yesterday, but in reality it should fetch all data from the source system
+        # including historical data since it is a first load.
+        source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
+        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
+
+        source_table['user_id'] = source_table['user_id'].str.split(',')
+        source_table['user_name'] = source_table['user_name'].str.split(',')
+        source_table['review_id'] = source_table['review_id'].str.split(',')
+        source_table['review_title'] = source_table['review_title'].str.split(',')
+        # A 'created_date' column is created and added to the staging dataset
+        source_table['created_date'] = datetime.today().date()
+
+        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
+        source_table.to_sql('stg_product_review', engine, index=False, if_exists='fail')
+
+        # Addition of surrogate key columns to staging.
+        db_user = os.getenv('DB_USER')
+        db_password = os.getenv('DB_PASS')
+
+        with psycopg2.connect(
+                host='localhost',
+                dbname='Destination',
+                user=db_user,
+                password=db_password,
+                port=5432) as connection:
+
+            with connection.cursor() as cursor:
+                staging_update = '''ALTER TABLE stg_product_review
+                ADD COLUMN product_key INT,
+                ADD COLUMN user_key INT
+                '''
+
+                cursor.execute(staging_update)
+
+                return print('Extraction to staging completed')
+
+    except Exception as error:
+        print(f'Extraction to staging failed: {error}')
+
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+# Creating the fact, dimension, and audit tables.
 
 connection = None
 db_user = os.getenv('DB_USER')
@@ -91,9 +145,10 @@ try:
 
             cursor.execute(create_etl_audit_table)
 
-            # Creating the stored procedure that updates the audit table when called. To derive the number
-            # of rows updated simply use the same condition defined at the ON CONFLICT step of UPSERT
-            # in this case setting last_updated_date column to current date.
+            # Creating the stored procedure that updates the audit table when called.
+            # To derive the number of rows updated, simply take the count of records where
+            # last_updated_date is populated with the current date (or appropriate time stamp,
+            # batch_id, etc.).
             create_procedure = '''
             CREATE OR REPLACE PROCEDURE audit_table(p_table_name text, p_column_name text)
             LANGUAGE plpgsql
@@ -147,7 +202,8 @@ finally:
         connection.close()
 
 
-# Defining the function that performs the INSERT action when called by the ETL stages.
+# Defining the function that loads the data and updates the audit table when called.
+
 def insert(insert_query, dataset, table_name, column_name):
     connection = None
     db_user = os.getenv('DB_USER')
@@ -172,9 +228,10 @@ def insert(insert_query, dataset, table_name, column_name):
                 call audit_table(%s, %s)
                 '''
 
-                cursor.execute(call_procedure, (table_name, column_name,))
                 # Reminder that arguments are passed to placeholders in psycopg2 using
                 # tuples or lists, even if it is only one value.
+                cursor.execute(call_procedure, (table_name, column_name,))
+
                 print('Audit table updated.')
 
     except Exception as error:
@@ -185,60 +242,8 @@ def insert(insert_query, dataset, table_name, column_name):
             connection.close()
 
 
-# Defining the function that extracts and transforms source data to staging.
-def extract_transform():
-    connection = None
+# Defining the functions that specifies the loading for each of the tables.
 
-    try:
-        engine = create_engine('postgresql:///Destination')
-
-        source_table = pd.read_excel('incremental load/ebay.xlsx')
-        source_table = source_table.copy()
-        source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
-        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
-        # This design fetches data from any past 'modified date' in the source data, in this case,
-        # data modified yesterday, but in reality it should fetch all data from the source system
-        # including historical data since it is a first load.
-
-        source_table['user_id'] = source_table['user_id'].str.split(',')
-        source_table['user_name'] = source_table['user_name'].str.split(',')
-        source_table['review_id'] = source_table['review_id'].str.split(',')
-        source_table['review_title'] = source_table['review_title'].str.split(',')
-        source_table['created_date'] = datetime.today().date()
-
-        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
-        source_table.to_sql('stg_product_review', engine, index=False, if_exists='fail')
-
-        # Addition of surrogate key columns to staging.
-        db_user = os.getenv('DB_USER')
-        db_password = os.getenv('DB_PASS')
-
-        with psycopg2.connect(
-                host='localhost',
-                dbname='Destination',
-                user=db_user,
-                password=db_password,
-                port=5432) as connection:
-
-            with connection.cursor() as cursor:
-                staging_update = '''ALTER TABLE stg_product_review
-                ADD COLUMN product_key INT,
-                ADD COLUMN user_key INT
-                '''
-
-                cursor.execute(staging_update)
-
-                return print('Extraction to staging completed')
-
-    except Exception as error:
-        print(f'Extraction to staging failed: {error}')
-
-    finally:
-        if connection is not None:
-            connection.close()
-
-
-# Defining the functions that loads the transformed data to the dimension tables and updates the audit table.
 def load_dim_product():
     table_name = 'dim_product'
     column_name = 'product_id'
@@ -250,8 +255,8 @@ def load_dim_product():
         product = dp[['product_id', 'product_name', 'category', 'about_product', 'img_link', 'product_link',
                       'rating', 'rating_count']].copy()
         product['rating_count'] = product['rating_count'].fillna(1)
-        product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
         # It is best practice to deduplicate dim tables using business keys alone.
+        product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
         product = product.to_dict('records')
 
         insert_query = '''INSERT into dim_product (
@@ -433,11 +438,11 @@ def transform_load_fact_table():
 
 extract_transform()
 
-load_dim_review()
+load_dim_product()
 
 load_dim_user()
 
-load_dim_product()
+load_dim_review()
 
 load_surrogate_keys()
 
