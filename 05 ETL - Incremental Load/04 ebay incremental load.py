@@ -9,8 +9,36 @@ from time import time
 
 load_dotenv()
 
+# Defining the function that extracts and transforms source data to staging.
 
-# Defining the function that will perform the INSERT action when called by the ETL stages.
+def extract_transform():
+    try:
+        engine = create_engine('postgresql:///Destination')
+
+        source_table = pd.read_excel('incremental load/ebay.xlsx')
+        source_table = source_table.copy()
+
+        # This design allows customization of modified date e.g. allowing only data
+        # modified yesterday to be fetched (mirroring an incremental loading design).
+        source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
+        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
+
+        source_table['user_id'] = source_table['user_id'].str.split(',')
+        source_table['user_name'] = source_table['user_name'].str.split(',')
+        source_table['review_id'] = source_table['review_id'].str.split(',')
+        source_table['review_title'] = source_table['review_title'].str.split(',')
+        source_table['created_date'] = datetime.today().date()
+
+        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
+        source_table.to_sql('stg_product_review', engine, index=False, if_exists='append')
+
+        return print('Extraction to staging completed.')
+
+    except Exception as error:
+        print(f'Extraction to staging failed: {error}')
+
+
+# Defining the function that loads the data and updates the audit table when called.
 
 def insert(insert_query, dataset, table_name, column_name):
     connection = None
@@ -49,36 +77,7 @@ def insert(insert_query, dataset, table_name, column_name):
             connection.close()
 
 
-# Defining the function that extracts and transforms source data to staging.
-
-def extract_transform():
-    try:
-        engine = create_engine('postgresql:///Destination')
-
-        source_table = pd.read_excel('incremental load/ebay.xlsx')
-        source_table = source_table.copy()
-
-        source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
-        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
-        # This design allows customization of modified date e.g. allowing only data
-        # modified yesterday to be fetched (incremental).
-
-        source_table['user_id'] = source_table['user_id'].str.split(',')
-        source_table['user_name'] = source_table['user_name'].str.split(',')
-        source_table['review_id'] = source_table['review_id'].str.split(',')
-        source_table['review_title'] = source_table['review_title'].str.split(',')
-        source_table['created_date'] = datetime.today().date()
-
-        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
-        source_table.to_sql('stg_product_review', engine, index=False, if_exists='append')
-
-        return print('Extraction to staging completed.')
-
-    except Exception as error:
-        print(f'Extraction to staging failed: {error}')
-
-
-# Defining the functions that loads the transformed data to the dimension tables and updates the audit table.
+# Defining the functions that specifies the loading for each of the tables.
 
 def load_dim_product():
     table_name = 'dim_product'
@@ -91,13 +90,16 @@ def load_dim_product():
         product = dp[['product_id', 'product_name', 'category', 'about_product', 'img_link', 'product_link',
                       'rating', 'rating_count', 'created_date']].copy()
 
+        # Fetch only today's product data from staging.
         product['created_date'] = pd.to_datetime(product['created_date']).dt.date
         product = product[product['created_date'] == datetime.today().date()]
-        # This fetches only today's product data from staging.
+
         product['rating_count'] = product['rating_count'].fillna(1)
         product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
         product = product.to_dict('records')
 
+        # UPSERT is used in loading the data. If any update happens, the last_modified_date
+        # column is populated with today's date (or in other implementations, a time stamp)
         insert_query = '''INSERT into dim_product (
         product_id,
         product_name,
@@ -147,9 +149,10 @@ def load_dim_user():
         du = pd.read_sql('stg_product_review', engine)
         user = du[['user_id', 'user_name', 'created_date']].copy()
 
+        # Fetch only today's user data from staging.
         user['created_date'] = pd.to_datetime(user['created_date']).dt.date
         user = user[user['created_date'] == datetime.today().date()]
-        # This fetches only today's user data from staging.
+
         user = user.drop_duplicates()
         user = user.to_dict('records')
 
@@ -184,9 +187,10 @@ def load_dim_review():
         drr = pd.read_sql('stg_product_review', engine)
         review = drr[['review_id', 'review_title', 'created_date']].copy()
 
+        # Fetch only today's review data from staging.
         review['created_date'] = pd.to_datetime(review['created_date']).dt.date
         review = review[review['created_date'] == datetime.today().date()]
-        # This fetches only today's review data from staging.
+
         review = review.rename(columns={'review_title': 'review_content'})
         review = review.drop_duplicates(subset=['review_id'], keep='first')
         review = review.to_dict('records')
@@ -281,9 +285,10 @@ def transform_load_fact_table():
         fact = dg[['discounted_price', 'actual_price', 'discount_percentage',
                    'product_key', 'created_date']].copy()
 
+        # Fetch only today's fact data from staging.
         fact['created_date'] = pd.to_datetime(fact['created_date']).dt.date
         fact = fact[fact['created_date'] == datetime.today().date()]
-        # This fetches only today's fact data from staging.
+
         fact['discounted_price'] = fact['discounted_price'].str.replace('₹', '')
         fact['discounted_price'] = fact['discounted_price'].str.replace(',', '').astype(float)
         fact['actual_price'] = fact['actual_price'].str.replace('₹', '')
@@ -313,11 +318,11 @@ def transform_load_fact_table():
 
 extract_transform()
 
-load_dim_review()
+load_dim_product()
 
 load_dim_user()
 
-load_dim_product()
+load_dim_review()
 
 load_surrogate_keys()
 
