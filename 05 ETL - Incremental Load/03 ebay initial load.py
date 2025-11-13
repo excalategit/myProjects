@@ -242,7 +242,7 @@ def insert(insert_query, dataset, table_name, column_name):
             connection.close()
 
 
-# Defining the functions that specifies the loading for each of the tables.
+# Defining the functions that specify the loading for each of the tables.
 
 def load_dim_product():
     table_name = 'dim_product'

@@ -77,7 +77,7 @@ def insert(insert_query, dataset, table_name, column_name):
             connection.close()
 
 
-# Defining the functions that specifies the loading for each of the tables.
+# Defining the functions that specify the loading for each of the tables.
 
 def load_dim_product():
     table_name = 'dim_product'
@@ -271,8 +271,7 @@ def load_surrogate_keys():
 
 
 # Defining the function that transforms and loads data from staging to the fact table
-# together with all surrogate keys.
-# Note that the fact table does not require UPSERT, only INSERT.
+# together with all surrogate keys. Note that the fact table does not require UPSERT, only INSERT.
 
 def transform_load_fact_table():
     table_name = 'fact_price'
