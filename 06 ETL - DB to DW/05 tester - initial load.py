@@ -39,6 +39,8 @@ def extract_transform():
 
         source_table['created_date'] = source_table['modified_date'] + timedelta(days=1)
 
+        source_table = source_table.drop_duplicates()
+
         to_gbq(source_table, 'my-dw-project-01.bq_upload_test.stg_bq_test', project_id=project_id, if_exists='fail')
 
         return print('Extraction to staging completed.')

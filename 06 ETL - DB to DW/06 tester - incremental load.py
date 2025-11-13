@@ -39,6 +39,8 @@ def extract_transform():
 
         source_table['created_date'] = source_table['modified_date'] + timedelta(days=1)
 
+        source_table = source_table.drop_duplicates()
+
         to_gbq(source_table, 'my-dw-project-01.bq_upload_test.stg_bq_test', project_id=project_id, if_exists='append')
 
         return print('Extraction to staging completed.')
@@ -52,15 +54,19 @@ def load_incremental():
     table_name_bq = 'my-dw-project-01.bq_upload_test.dim_product'
     column_name = 'product_id'
 
+    # SELECT * EXCEPT(row_num) FROM (
+    #     SELECT *, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_date DESC) AS row_num
+    #     FROM `my-dw-project-01.bq_upload_test.stg_bq_test`
+    #     WHERE modified_date = (select max(modified_date) from `my-dw-project-01.bq_upload_test.stg_bq_test`)
+    # ) WHERE row_num = 1) s
+
     try:
         insert_query = """
         MERGE `my-dw-project-01.bq_upload_test.dim_product` p
         USING (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_date DESC) AS row_num
-                FROM `my-dw-project-01.bq_upload_test.stg_bq_test`
-                WHERE modified_date = (select max(modified_date) from `my-dw-project-01.bq_upload_test.stg_bq_test`)
-            ) WHERE row_num = 1) s
+            SELECT * FROM `my-dw-project-01.bq_upload_test.stg_bq_test`
+            WHERE modified_date = (select max(modified_date) from `my-dw-project-01.bq_upload_test.stg_bq_test`)
+            )
         ON p.product_id = s.product_id
         WHEN MATCHED THEN
           UPDATE SET p.product_name = s.product_name, p.category = s.category, p.about_product = s.about_product,

@@ -40,6 +40,8 @@ def extract_transform():
         # source_table = source_table.rename(columns={'actual_price': 'actual_price_pln'})
         source_table['created_date'] = datetime.today().date()
 
+        source_table = source_table.drop_duplicates()
+
         to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project',
                project_id='my-dw-project-01', if_exists='fail')
 
