@@ -4,20 +4,19 @@ The project showcases a pipeline that fetches data from a Postgres database, tra
 The intention is to mirror the pipeline requirements involved in fetching transactional data from an OLTP database 
 and preparing it for analytics and storage in an OLAP database.
 
-The exercise showcases a more modern design and the implications of implementing a data warehouse solution in a pipeline.
+The exercise showcases a more modern data pipeline design and the implications of incorporating a data warehouse 
+into the pipeline.
 
-Implications:
-- BigQuery has its own UPSERT logic (MERGE) which is based on SQL. Unlike the Postgres implementation where 
-a dataframe is prepared and used as the reference for UPSERT, BigQuery uses the staging table as the reference. 
-Therefore...
-- The BigQuery implementation expects staging to already contain cleaned/transformed data. This requires that the data is 
+Insights:
+- BigQuery has its own UPSERT function called MERGE. It's the same as UPSERT just that it does not utilize a dataframe 
+to prepare the data for comparison and loading, rather it uses the raw staging table. Therefore...
+- BigQuery's expects staging to already contain cleaned/transformed data. This requires that the data is 
 cleaned before loading to staging.
-- Because UPSERT does not utilize a pandas dataframe, there is more reliance on SQL proficiency to prepare the reference
-table to required standard.
-- Also when performing an UPDATE/MERGE process BigQuery expects the source table column being used as the key to contain
-unique values e.g. SQL's window function was utilized to address this need.
-- There is the need to learn the new tools for interacting with BigQuery (from Python) such as to_gbp, bigquery.Client, 
-QueryJobConfig() etc.
+- Due to BiqQuery's restrictions there is more reliance on SQL proficiency to prepare the data to required standards 
+e.g. while performing an UPDATE action to tables BigQuery expects the source table column used as the key to contain
+unique values. SQL's window function was utilized to address this need.
+- There is a need to learn and utilize new methods that allow Python to interact with BigQuery e.g. to_gbp, 
+bigquery.Client, QueryJobConfig() etc.
 - The requirements to load and update the audit table required an understanding of SQL's stored procedures.
 - There are changes in the considerations for the data model design as BigQuery does not enforce primary keys.
-- The addition of a 'loading time' component to the audit table.
+- A 'loading time' component was added to the audit table.
