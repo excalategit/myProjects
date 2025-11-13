@@ -9,6 +9,56 @@ from time import time
 
 client = bigquery.Client()
 
+# Defining the function that extracts and transforms source data to staging.
+def extract_transform():
+    try:
+        engine = create_engine('postgresql:///Destination')
+
+        # This design fetches data from any past 'modified date' in the source data, in this case,
+        # data modified yesterday, but in reality it should fetch all data from the source system
+        # including historical data since it is a first load.
+        source_table = pd.read_sql('bq_source_data', engine)
+        source_table = source_table.copy()
+        source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
+        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
+
+        # Note that all required data transformations are completed before loading to staging.
+        source_table['user_id'] = source_table['user_id'].str.split(',')
+        source_table['user_name'] = source_table['user_name'].str.split(',')
+        source_table['review_id'] = source_table['review_id'].str.split(',')
+        source_table['review_title'] = source_table['review_title'].str.split(',')
+        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
+
+        source_table['rating_count'] = source_table['rating_count'].fillna(1)
+        source_table['discounted_price'] = source_table['discounted_price'].str.replace('₹', '')
+        source_table['discounted_price'] = source_table['discounted_price'].str.replace(',', '').astype(float)
+        source_table['actual_price'] = source_table['actual_price'].str.replace('₹', '')
+        source_table['actual_price'] = source_table['actual_price'].str.replace(',', '').astype(float)
+
+        # source_table = source_table.rename(columns={'review_title': 'review_content'})
+        # source_table = source_table.rename(columns={'discounted_price': 'discounted_price_pln'})
+        # source_table = source_table.rename(columns={'actual_price': 'actual_price_pln'})
+        source_table['created_date'] = datetime.today().date()
+
+        to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project',
+               project_id='my-dw-project-01', if_exists='fail')
+
+        # Addition of surrogate key columns to staging.
+
+        staging_update = '''ALTER TABLE my-dw-project-01.bq_upload.stg_bq_project
+        ADD COLUMN product_key STRING,
+        ADD COLUMN user_key STRING
+        '''
+
+        query_job = client.query(staging_update)
+        query_job.result()
+
+        return print('Extraction to staging completed')
+
+    except Exception as error:
+        print(f'Extraction to staging failed: {error}')
+
+
 try:
     dim_product = '''
     CREATE TABLE IF NOT EXISTS my-dw-project-01.bq_upload.dim_product (
@@ -81,55 +131,8 @@ except Exception as error:
     print(error)
 
 
-def extract_transform():
-    try:
-        engine = create_engine('postgresql:///Destination')
-
-        source_table = pd.read_sql('bq_source_data', engine)
-        source_table = source_table.copy()
-        source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
-        source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
-        # This design fetches data from any past 'modified date' in the source data, in this case,
-        # data modified yesterday, but in reality it should fetch all data from the source system
-        # including historical data since it is a first load.
-
-        source_table['user_id'] = source_table['user_id'].str.split(',')
-        source_table['user_name'] = source_table['user_name'].str.split(',')
-        source_table['review_id'] = source_table['review_id'].str.split(',')
-        source_table['review_title'] = source_table['review_title'].str.split(',')
-        source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
-
-        source_table['rating_count'] = source_table['rating_count'].fillna(1)
-        source_table['discounted_price'] = source_table['discounted_price'].str.replace('₹', '')
-        source_table['discounted_price'] = source_table['discounted_price'].str.replace(',', '').astype(float)
-        source_table['actual_price'] = source_table['actual_price'].str.replace('₹', '')
-        source_table['actual_price'] = source_table['actual_price'].str.replace(',', '').astype(float)
-
-        # source_table = source_table.rename(columns={'review_title': 'review_content'})
-        # source_table = source_table.rename(columns={'discounted_price': 'discounted_price_pln'})
-        # source_table = source_table.rename(columns={'actual_price': 'actual_price_pln'})
-        source_table['created_date'] = datetime.today().date()
-
-        to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project',
-               project_id='my-dw-project-01', if_exists='fail')
-
-        # Addition of surrogate key columns to staging.
-
-        staging_update = '''ALTER TABLE my-dw-project-01.bq_upload.stg_bq_project
-        ADD COLUMN product_key STRING,
-        ADD COLUMN user_key STRING
-        '''
-
-        query_job = client.query(staging_update)
-        query_job.result()
-
-        return print('Extraction to staging completed')
-
-    except Exception as error:
-        print(f'Extraction to staging failed: {error}')
-
-
-def insert(project_id, dataset_id, dataframe, table_name, table_name_bq, column_name):
+# Defining the function that loads the data and updates the audit table when called.
+def loader(project_id, dataset_id, dataframe, table_name, table_name_bq, column_name):
     try:
         t1 = time()
         to_gbq(dataframe, f'{dataset_id}.{table_name}', project_id=project_id, if_exists='fail')
@@ -144,6 +147,8 @@ def insert(project_id, dataset_id, dataframe, table_name, table_name_bq, column_
                     call `my-dw-project-01.bq_upload.audit_table`(@table_name_bq, @column_name, @load_time)
                     '''
 
+            # job_config allows the supply of arguments to a function that is being called
+            # through the BigQuery connection engine, in this case the function is the stored procedure.
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
                     bigquery.ScalarQueryParameter('table_name_bq', 'STRING', table_name_bq),
@@ -163,6 +168,7 @@ def insert(project_id, dataset_id, dataframe, table_name, table_name_bq, column_
         print(f'Loading failed for {table_name}: {error}')
 
 
+# Defining the functions that specify the loading for each of the tables.
 def load_dim_product():
     project_id = 'my-dw-project-01'
     dataset_id = 'bq_upload'
@@ -176,7 +182,7 @@ def load_dim_product():
                       'rating', 'rating_count']].copy()
         product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
 
-        insert(project_id, dataset_id, product, table_name, table_name_bq, column_name)
+        loader(project_id, dataset_id, product, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Transformation stage failed for {table_name}: {error}')
@@ -194,7 +200,7 @@ def load_dim_user():
         user = du[['user_id', 'user_name']].copy()
         user = user.drop_duplicates()
 
-        insert(project_id, dataset_id, user, table_name, table_name_bq, column_name)
+        loader(project_id, dataset_id, user, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Transformation stage failed for {table_name}: {error}')
@@ -212,7 +218,7 @@ def load_dim_review():
         review = dr[['review_id', 'review_title']].copy()
         review = review.drop_duplicates(subset=['review_id'], keep='first')
 
-        insert(project_id, dataset_id, review, table_name, table_name_bq, column_name)
+        loader(project_id, dataset_id, review, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Transformation stage failed for {table_name}: {error}')
@@ -269,7 +275,7 @@ def transform_load_fact_table():
                    'product_key']].copy()
         fact = fact.drop_duplicates(subset=['product_key'], keep='first')
 
-        insert(project_id, dataset_id, fact, table_name, table_name_bq, column_name)
+        loader(project_id, dataset_id, fact, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Transformation stage failed for {table_name}: {error}')
@@ -277,11 +283,11 @@ def transform_load_fact_table():
 
 extract_transform()
 
-load_dim_review()
+load_dim_product()
 
 load_dim_user()
 
-load_dim_product()
+load_dim_review()
 
 load_surrogate_keys()
 
