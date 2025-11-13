@@ -8,9 +8,10 @@ from dotenv import load_dotenv
 from time import time
 
 load_dotenv()
+db_user = os.getenv('DB_USER')
+db_password = os.getenv('DB_PASS')
 
 # Defining the function that extracts and transforms source data to staging.
-
 def extract_transform():
     try:
         engine = create_engine('postgresql:///Destination')
@@ -32,18 +33,15 @@ def extract_transform():
         source_table = source_table.explode(['user_id', 'user_name', 'review_id', 'review_title'])
         source_table.to_sql('stg_product_review', engine, index=False, if_exists='append')
 
-        return print('Extraction to staging completed.')
+        print('Extraction to staging completed.')
 
     except Exception as error:
         print(f'Extraction to staging failed: {error}')
 
 
 # Defining the function that loads the data and updates the audit table when called.
-
-def insert(insert_query, dataset, table_name, column_name):
+def loader(insert_query, dataset, table_name, column_name):
     connection = None
-    db_user = os.getenv('DB_USER')
-    db_password = os.getenv('DB_PASSWORD')
     loaded_rows = 0
 
     try:
@@ -99,7 +97,8 @@ def load_dim_product():
         product = product.to_dict('records')
 
         # UPSERT is used in loading the data. If any update happens, the last_modified_date
-        # column is populated with today's date (or in other implementations, a time stamp)
+        # column is populated with today's date for audit purposes
+        # (in other implementations, an appropriate id such as batch_id, time stamp, etc. can be used)
         insert_query = '''INSERT into dim_product (
         product_id,
         product_name,
@@ -132,8 +131,7 @@ def load_dim_product():
             last_updated_date = CURRENT_DATE
         '''
 
-        insert(insert_query, product, table_name, column_name)
-        return None
+        loader(insert_query, product, table_name, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -170,8 +168,7 @@ def load_dim_user():
             last_updated_date = CURRENT_DATE
         '''
 
-        insert(insert_query, user, table_name, column_name)
-        return None
+        loader(insert_query, user, table_name, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -209,19 +206,15 @@ def load_dim_review():
             last_updated_date = CURRENT_DATE
         '''
 
-        insert(insert_query, review, table_name, column_name)
-        return None
+        loader(insert_query, review, table_name, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
 
 
 # Defining the function that fetches and loads surrogate keys to their respective target tables.
-
 def load_surrogate_keys():
     connection = None
-    db_user = os.getenv('DB_USER')
-    db_password = os.getenv('DB_PASSWORD')
 
     try:
 
@@ -235,7 +228,6 @@ def load_surrogate_keys():
             with connection.cursor() as cursor:
                 # Loading surrogate keys from dimension tables to staging. For efficiency,
                 # only today's newly generated surrogate keys are added to staging.
-
                 product_key = '''UPDATE stg_product_review AS s SET product_key = p.product_key 
                 FROM ebay.dim_product AS p WHERE s.created_date = CURRENT_DATE AND 
                 s.product_id = p.product_id AND s.product_name = p.product_name'''
@@ -247,20 +239,18 @@ def load_surrogate_keys():
                 cursor.execute(user_key)
 
                 # Loading dim_product table's surrogate keys from staging to dim_review.
-
                 load_prod_review = '''UPDATE ebay.dim_review r SET product_key = sa.product_key
                 FROM stg_product_review sa
                 WHERE r.review_id = sa.review_id'''
                 cursor.execute(load_prod_review)
 
                 # Loading dim_user table's surrogate keys from staging to dim_review.
-
                 load_user_review = '''UPDATE ebay.dim_review r SET user_key = sa.user_key
                 FROM stg_product_review sa
                 WHERE r.review_id = sa.review_id'''
                 cursor.execute(load_user_review)
 
-                return print('All target tables updated with surrogate keys successfully.')
+                print('All target tables updated with surrogate keys successfully.')
 
     except Exception as error:
         print(f'Loading surrogate keys failed: {error}')
@@ -308,8 +298,7 @@ def transform_load_fact_table():
         %(product_key)s
         )'''
 
-        insert(insert_query, fact, table_name, column_name)
-        return None
+        loader(insert_query, fact, table_name, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
