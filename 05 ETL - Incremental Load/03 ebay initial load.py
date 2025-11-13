@@ -7,6 +7,8 @@ from datetime import timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
+db_user = os.getenv('DB_USER')
+db_password = os.getenv('DB_PASS')
 
 # Defining the function that extracts and transforms source data to staging.
 def extract_transform():
@@ -15,7 +17,7 @@ def extract_transform():
     try:
         engine = create_engine('postgresql:///Destination')
 
-        source_table = pd.read_excel('incremental load/ebay.xlsx')
+        source_table = pd.read_excel('05 ETL - Incremental Load/ebay.xlsx')
         source_table = source_table.copy()
         # This design fetches data from any past 'modified date' in the source data, in this case,
         # data modified yesterday, but in reality it should fetch all data from the source system
@@ -34,8 +36,6 @@ def extract_transform():
         source_table.to_sql('stg_product_review', engine, index=False, if_exists='fail')
 
         # Addition of surrogate key columns to staging.
-        db_user = os.getenv('DB_USER')
-        db_password = os.getenv('DB_PASS')
 
         with psycopg2.connect(
                 host='localhost',
@@ -52,7 +52,7 @@ def extract_transform():
 
                 cursor.execute(staging_update)
 
-                return print('Extraction to staging completed')
+                print('Extraction to staging completed')
 
     except Exception as error:
         print(f'Extraction to staging failed: {error}')
@@ -63,13 +63,9 @@ def extract_transform():
 
 
 # Creating the fact, dimension, and audit tables.
-
 connection = None
-db_user = os.getenv('DB_USER')
-db_password = os.getenv('DB_PASSWORD')
 
 try:
-
     with psycopg2.connect(
             host='localhost',
             dbname='Destination',
@@ -203,47 +199,34 @@ finally:
 
 
 # Defining the function that loads the data and updates the audit table when called.
-
-def insert(insert_query, dataset, table_name, column_name):
-    connection = None
-    db_user = os.getenv('DB_USER')
-    db_password = os.getenv('DB_PASSWORD')
-    loaded_rows = 0
-
+# Instead of INSERT, the loading script utilizes 'to_sql' as it is designed to handle the
+# same task on the back-end, and makes for neater code.
+def loader(dataset, table_name, column_name):
     try:
-        with psycopg2.connect(
-                host='localhost',
-                dbname='Destination',
-                user=db_user,
-                password=db_password,
-                port=5432,
-                options='-c search_path=ebay') as connection:
+        loaded_rows = 0
 
-            with connection.cursor() as cursor:
-                psycopg2.extras.execute_batch(cursor, insert_query, dataset)
-                print(f'Rows {loaded_rows} to {len(dataset)} loaded successfully for {table_name}')
-                loaded_rows += len(dataset)
+        engine = create_engine('postgresql:///Destination')
 
-                call_procedure = ''' 
-                call audit_table(%s, %s)
-                '''
+        dataset.to_sql(table_name, engine, schema='ebay', if_exists='append', index=False)
+        print(f'Rows {loaded_rows} to {len(dataset)} loaded successfully for {table_name}')
+        loaded_rows += len(dataset)
 
-                # Reminder that arguments are passed to placeholders in psycopg2 using
-                # tuples or lists, even if it is only one value.
-                cursor.execute(call_procedure, (table_name, column_name,))
+        call_procedure = ''' 
+        call audit_table(%s, %s)
+        '''
 
-                print('Audit table updated.')
+        # Reminder that arguments are passed to placeholders in psycopg2 using
+        # tuples or lists, even if it is only one value.
+        cursor.execute(call_procedure, (table_name, column_name,))
+
+        print('Audit table updated.')
 
     except Exception as error:
         print(f'Loading failed for {table_name}: {error}')
 
-    finally:
-        if connection is not None:
-            connection.close()
-
 
 # Defining the functions that specify the loading for each of the tables.
-
+# Because to_sql is used for loading there is no need to create an INSERT script for loading any longer.
 def load_dim_product():
     table_name = 'dim_product'
     column_name = 'product_id'
@@ -257,31 +240,8 @@ def load_dim_product():
         product['rating_count'] = product['rating_count'].fillna(1)
         # It is best practice to deduplicate dim tables using business keys alone.
         product = product.drop_duplicates(subset=['product_id', 'product_name'], keep='first')
-        product = product.to_dict('records')
 
-        insert_query = '''INSERT into dim_product (
-        product_id,
-        product_name,
-        category,
-        about_product,
-        img_link,
-        product_link,
-        rating,
-        rating_count
-        ) 
-        VALUES (
-        %(product_id)s,
-        %(product_name)s,
-        %(category)s,
-        %(about_product)s,
-        %(img_link)s,
-        %(product_link)s,
-        %(rating)s,
-        %(rating_count)s
-        )'''
-
-        insert(insert_query, product, table_name, column_name)
-        return None
+        loader(product, table_name, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -297,19 +257,8 @@ def load_dim_user():
         du = pd.read_sql('stg_product_review', engine)
         user = du[['user_id', 'user_name']].copy()
         user = user.drop_duplicates()
-        user = user.to_dict('records')
 
-        insert_query = '''INSERT into dim_user (
-        user_id,
-        user_name
-        ) 
-        VALUES (
-        %(user_id)s,
-        %(user_name)s
-        )'''
-
-        insert(insert_query, user, table_name, column_name)
-        return None
+        loader(user, table_name, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -326,19 +275,8 @@ def load_dim_review():
         review = drr[['review_id', 'review_title']].copy()
         review = review.rename(columns={'review_title': 'review_content'})
         review = review.drop_duplicates(subset=['review_id'], keep='first')
-        review = review.to_dict('records')
 
-        insert_query = '''INSERT into dim_review (
-        review_id,
-        review_content
-        )
-        VALUES (
-        %(review_id)s,
-        %(review_content)s
-        )'''
-
-        insert(insert_query, review, table_name, column_name)
-        return None
+        loader(review, table_name, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -347,8 +285,6 @@ def load_dim_review():
 # Defining the function that fetches and loads surrogate keys to their respective target tables.
 def load_surrogate_keys():
     connection = None
-    db_user = os.getenv('DB_USER')
-    db_password = os.getenv('DB_PASSWORD')
 
     try:
 
@@ -361,7 +297,6 @@ def load_surrogate_keys():
 
             with connection.cursor() as cursor:
                 # Loading surrogate keys from dimension tables to staging.
-
                 product_key = '''UPDATE stg_product_review AS s SET product_key = p.product_key
                 FROM ebay.dim_product AS p WHERE s.product_id = p.product_id AND
                 s.product_name = p.product_name'''
@@ -373,20 +308,18 @@ def load_surrogate_keys():
                 cursor.execute(user_key)
 
                 # Loading dim_product table's surrogate keys from staging to dim_review.
-
                 load_prod_review = '''UPDATE ebay.dim_review r SET product_key = sa.product_key
                 FROM stg_product_review sa
                 WHERE r.review_id = sa.review_id'''
                 cursor.execute(load_prod_review)
 
                 # Loading dim_user table's surrogate keys from staging to dim_review.
-
                 load_user_review = '''UPDATE ebay.dim_review r SET user_key = sa.user_key
                 FROM stg_product_review sa
                 WHERE r.review_id = sa.review_id'''
                 cursor.execute(load_user_review)
 
-                return print('All target tables updated with surrogate keys successfully')
+                print('All target tables updated with surrogate keys successfully')
 
     except Exception as error:
         print(f'Loading surrogate keys failed: {error}')
@@ -406,31 +339,18 @@ def transform_load_fact_table():
         engine = create_engine('postgresql:///Destination')
 
         dg = pd.read_sql('stg_product_review', engine)
-        fact = dg[['discounted_price', 'actual_price', 'discount_percentage',
+        fact = dg[['actual_price', 'discounted_price', 'discount_percentage',
                    'product_key']].copy()
 
         fact['discounted_price'] = fact['discounted_price'].str.replace('₹', '')
         fact['discounted_price'] = fact['discounted_price'].str.replace(',', '').astype(float)
+        fact = fact.rename(columns={'discounted_price': 'discounted_price (PLN)'})
         fact['actual_price'] = fact['actual_price'].str.replace('₹', '')
         fact['actual_price'] = fact['actual_price'].str.replace(',', '').astype(float)
+        fact = fact.rename(columns={'actual_price': 'actual_price (PLN)'})
         fact = fact.drop_duplicates(subset=['product_key'], keep='first')
-        fact = fact.to_dict('records')
 
-        insert_query = '''INSERT into fact_price (
-        "actual_price (PLN)",
-        "discounted_price (PLN)",
-        discount_percentage,
-        product_key
-        ) 
-        VALUES (
-        %(actual_price)s,
-        %(discounted_price)s,
-        %(discount_percentage)s,
-        %(product_key)s
-        )'''
-
-        insert(insert_query, fact, table_name, column_name)
-        return None
+        loader(fact, table_name, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
