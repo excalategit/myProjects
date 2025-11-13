@@ -19,10 +19,11 @@ def extract_transform():
         source_table = pd.read_sql('bq_source_data', engine)
         source_table = source_table.copy()
 
+        # This design allows the customization of modified date e.g. allowing only data
+        # modified yesterday to be fetched (for incremental loading).
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
         source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=0)]
-        # This design allows customization of modified date e.g. allowing only data
-        # modified yesterday to be fetched (incremental).
+
 
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
@@ -56,6 +57,10 @@ def load_incremental():
     column_name = 'product_id'
 
     try:
+        # In order to ensure that unique and latest incarnations of product_ids are selected from
+        # staging to be used in the merging (UPSERT) logic, a window function is employed to group
+        # staging data by product_id, order each group by created_date, then assign row numbers for
+        # each group. Finally, the top-most product_id of each group is selected.
         insert_query = """
         MERGE `my-dw-project-01.bq_upload_test.dim_product` p
         USING (
@@ -75,9 +80,7 @@ def load_incremental():
           VALUES (s.product_id, s.product_name, s.category, s.about_product, s.img_link, s.product_link,
           s.rating, s.rating_count, s.created_date)
         """
-        # The window function used here groups staging data by product_id, orders each group by created_date,
-        # and assigns row numbers for each group. Next the top-most product_id of each group is selected.
-        # This ensures that unique and latest incarnations of product_ids are selected ready for merge (upsert).
+
         try:
             t1 = time()
             query_job = client.query(insert_query)

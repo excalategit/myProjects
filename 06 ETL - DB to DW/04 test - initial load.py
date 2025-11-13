@@ -21,11 +21,12 @@ def extract_transform():
         source_table = pd.read_sql('bq_source_data', engine)
         source_table = source_table.copy()
 
+        # This design allows the customization of the initial load date based on the modified date
+        # column in the source dataset.
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
         source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=6)]
-        # This design allows customization of the initial load date based on the modified date column in
-        # the dataset.
 
+        # Note that all required data transformations are completed before loading to staging
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
         source_table['review_id'] = source_table['review_id'].str.split(',')
@@ -44,6 +45,7 @@ def extract_transform():
 
         source_table['created_date'] = source_table['modified_date'] + timedelta(days=1)
 
+        # Loading to BigQuery for staging
         to_gbq(source_table, 'my-dw-project-01.bq_upload_test.stg_bq_test', project_id=project_id, if_exists='fail')
 
         return print('Extraction to staging completed.')

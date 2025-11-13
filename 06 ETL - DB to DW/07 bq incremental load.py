@@ -8,7 +8,6 @@ from time import time
 
 client = bigquery.Client()
 
-
 # Defining the function that extracts and transforms source data to staging.
 def extract_transform():
     try:
@@ -17,10 +16,10 @@ def extract_transform():
         source_table = pd.read_sql('bq_source_data', engine)
         source_table = source_table.copy()
 
+        # This design allows the customization of modified date e.g. allowing only data
+        # modified yesterday to be fetched (for incremental loading).
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
         source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
-        # This design allows customization of modified date e.g. allowing only data
-        # modified yesterday to be fetched (incremental).
 
         source_table['user_id'] = source_table['user_id'].str.split(',')
         source_table['user_name'] = source_table['user_name'].str.split(',')
@@ -49,8 +48,8 @@ def extract_transform():
         print(f'Extraction to staging failed: {error}')
 
 
-# Defining the function that will perform the INSERT action when called by the ETL stages.
-def insert(insert_query, table_name, table_name_bq, column_name):
+# Defining the function that loads the data and updates the audit table when called.
+def loader(insert_query, table_name, table_name_bq, column_name):
     try:
         t1 = time()
         query_job = client.query(insert_query)
@@ -66,6 +65,8 @@ def insert(insert_query, table_name, table_name_bq, column_name):
                     call `my-dw-project-01.bq_upload.audit_table`(@table_name_bq, @column_name, @load_time)
                     '''
 
+            # job_config allows the supply of arguments to a function that is being called
+            # through the BigQuery connection engine, in this case the function is the stored procedure.
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
                     bigquery.ScalarQueryParameter('table_name_bq', 'STRING', table_name_bq),
@@ -85,21 +86,22 @@ def insert(insert_query, table_name, table_name_bq, column_name):
         print(f'Loading failed for {table_name}: {error}')
 
 
-# Defining the functions that loads the transformed data to the dimension tables and updates the audit table.
+# Defining the functions that specify the loading for each of the tables.
 def load_dim_product():
     table_name = 'dim_product'
     table_name_bq = 'my-dw-project-01.bq_upload.dim_product'
     column_name = 'product_id'
 
     try:
+        # The MERGE logic and the UPSERT logic are the same, the slight difference is that
+        # while UPSERT uses a dataframe of staging table data filtered for today (or appropriate period)'s
+        # data and compares it with the existing dim table, MERGE uses the raw staging table (not a dataframe)
+        # filtered for today's data, for its comparison.
         insert_query = """
         MERGE `my-dw-project-01.bq_upload.dim_product` p
         USING (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_date DESC) AS row_num
-                FROM `my-dw-project-01.bq_upload.stg_bq_project`
-                WHERE created_date = CURRENT_DATE
-                ) WHERE row_num = 1
+            SELECT * FROM `my-dw-project-01.bq_upload.stg_bq_project`
+            WHERE created_date = CURRENT_DATE
             ) AS s
         ON p.product_id = s.product_id
         WHEN MATCHED THEN
@@ -112,11 +114,8 @@ def load_dim_product():
           VALUES (s.product_id, s.product_name, s.category, s.about_product, s.img_link, s.product_link,
           s.rating, s.rating_count)
         """
-        # The window function used here groups staging data by product_id, orders each group by created_date,
-        # and assigns row numbers for each group. Next the top-most product_id of each group is selected.
-        # This ensures that unique and latest incarnations of product_ids are selected ready for merge (upsert).
 
-        insert(insert_query, table_name, table_name_bq, column_name)
+        loader(insert_query, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -131,11 +130,8 @@ def load_dim_user():
         insert_query = """
         MERGE `my-dw-project-01.bq_upload.dim_user` u
         USING (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_date DESC) AS row_num
-                FROM `my-dw-project-01.bq_upload.stg_bq_project`
-                WHERE created_date = CURRENT_DATE
-                ) WHERE row_num = 1
+            SELECT * FROM `my-dw-project-01.bq_upload.stg_bq_project`
+            WHERE created_date = CURRENT_DATE
             ) AS s
         ON u.user_id = s.user_id
         WHEN MATCHED THEN
@@ -145,7 +141,7 @@ def load_dim_user():
           VALUES (s.user_id, s.user_name)
         """
 
-        insert(insert_query, table_name, table_name_bq, column_name)
+        loader(insert_query, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -160,11 +156,8 @@ def load_dim_review():
         insert_query = """
         MERGE `my-dw-project-01.bq_upload.dim_review` r
         USING (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
-                FROM `my-dw-project-01.bq_upload.stg_bq_project`
-                WHERE created_date = CURRENT_DATE
-                ) WHERE row_num = 1
+            SELECT * FROM `my-dw-project-01.bq_upload.stg_bq_project`
+            WHERE created_date = CURRENT_DATE
             ) AS s
         ON r.review_id = s.review_id
         WHEN MATCHED THEN
@@ -174,14 +167,13 @@ def load_dim_review():
           VALUES (s.review_id, s.review_title)
         """
 
-        insert(insert_query, table_name, table_name_bq, column_name)
+        loader(insert_query, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
 
 
 # Defining the function that fetches and loads surrogate keys to their respective target tables.
-
 def load_surrogate_keys():
     try:
         # Loading surrogate keys from dimension tables to staging.
@@ -202,21 +194,22 @@ def load_surrogate_keys():
         query_job.result()
 
         # Loading surrogate keys from staging to dim_review.
-        # BigQuery unlike Postgres requires the source table to have unique records based on
-        # the column used for comparison i.e. the source_table cannot contain multiple
-        # rows with the same id while the target_table has one row with that same id, which is the
-        # case here. The solution employed here creates a subset of staging data containing
-        # unique review_ids, again using Window Functions.
+
+        # BigQuery, unlike Postgres requires the source table to have unique records of the
+        # column that will be used for comparison with the target table i.e. the source_table cannot
+        # contain multiple records of the same id while the target_table has only one with that same id,
+        # which is the case here. The solution employed here (Window Functions) creates a subset of
+        # staging data containing unique review_ids and review_ids with today's creation date for
+        # the comparison.
 
         # Loading dim_product table's surrogate keys from staging to dim_review.
-
         load_prod_review = '''
         UPDATE my-dw-project-01.bq_upload.dim_review r SET product_key = s.product_key
         FROM (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
+            SELECT * EXCEPT(rank) FROM (
+                SELECT *, RANK() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS rank
                 FROM my-dw-project-01.bq_upload.stg_bq_project
-                ) WHERE row_num = 1
+                ) WHERE rank = 1
             ) AS s
         WHERE r.review_id = s.review_id
         '''
@@ -224,14 +217,13 @@ def load_surrogate_keys():
         query_job.result()
 
         # Loading dim_user table's surrogate keys from staging to dim_review.
-
         load_user_review = '''
         UPDATE my-dw-project-01.bq_upload.dim_review AS r SET user_key = s.user_key
         FROM (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
+            SELECT * EXCEPT(rank) FROM (
+                SELECT *, RANK() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS rank
                 FROM my-dw-project-01.bq_upload.stg_bq_project
-                ) WHERE row_num = 1
+                ) WHERE rank = 1
             ) AS s
         WHERE r.review_id = s.review_id
         '''
@@ -245,9 +237,7 @@ def load_surrogate_keys():
 
 
 # Defining the function that transforms and loads data from staging to the fact table
-# together with all surrogate keys.
-# Note that the fact table does not require UPSERT, only INSERT.
-
+# together with all surrogate keys. Note that the fact table does not require MERGE (UPSERT), only INSERT.
 def transform_load_fact_table():
     table_name = 'fact_price'
     table_name_bq = 'my-dw-project-01.bq_upload.fact_price'
@@ -259,15 +249,13 @@ def transform_load_fact_table():
         (actual_price, discounted_price, discount_percentage, product_key) (
             SELECT * EXCEPT(created_date, row_num) FROM (
                 SELECT actual_price, discounted_price, discount_percentage, product_key, 
-                created_date, ROW_NUMBER() 
-                OVER (PARTITION BY product_key ORDER BY created_date DESC) AS row_num
+                created_date, RANK() OVER (PARTITION BY product_key ORDER BY created_date DESC) AS rank
                 FROM `my-dw-project-01.bq_upload.stg_bq_project`
-                WHERE created_date = CURRENT_DATE
-                ) WHERE row_num = 1
+                ) WHERE rank = 1 and created_date = CURRENT_DATE
             )
         """
 
-        insert(insert_query, table_name, table_name_bq, column_name)
+        loader(insert_query, table_name, table_name_bq, column_name)
         return None
 
     except Exception as error:
@@ -276,11 +264,11 @@ def transform_load_fact_table():
 
 extract_transform()
 
-load_dim_review()
+load_dim_product()
 
 load_dim_user()
 
-load_dim_product()
+load_dim_review()
 
 load_surrogate_keys()
 
