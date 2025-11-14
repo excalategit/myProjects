@@ -249,13 +249,10 @@ def transform_load_fact_table():
         insert_query = """
         INSERT INTO `my-dw-project-01.bq_upload.fact_price` 
         (actual_price, discounted_price, discount_percentage, product_key) (
-            SELECT * EXCEPT(created_date, row_num) FROM (
-                SELECT actual_price, discounted_price, discount_percentage, product_key, 
-                created_date, RANK() OVER (PARTITION BY product_key ORDER BY created_date DESC) AS rank
-                FROM `my-dw-project-01.bq_upload.stg_bq_project`
-                ) WHERE rank = 1 and created_date = CURRENT_DATE
-            )
-        """
+            SELECT actual_price, discounted_price, discount_percentage, product_key, 
+            FROM `my-dw-project-01.bq_upload.stg_bq_project`
+            WHERE created_date = CURRENT_DATE
+            )"""
 
         loader(insert_query, table_name, table_name_bq, column_name)
         return None
