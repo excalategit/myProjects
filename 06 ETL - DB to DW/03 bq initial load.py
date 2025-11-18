@@ -149,7 +149,7 @@ def loader(project_id, dataset_id, dataframe, table_name, table_name_bq, column_
                     call `my-dw-project-01.bq_upload.audit_table`(@table_name_bq, @column_name, @load_time)
                     '''
 
-            # job_config allows the supply of arguments to a function that is being called
+            # job_config enables arguments to be supplied to a function that is being called
             # through the BigQuery connection engine, in this case the function is the stored procedure.
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
@@ -243,7 +243,6 @@ def load_surrogate_keys():
         query_job.result()
 
         # Loading dim_product table's surrogate keys from staging to dim_review.
-
         load_prod_review = '''UPDATE my-dw-project-01.bq_upload.dim_review r SET product_key = s.product_key
         FROM my-dw-project-01.bq_upload.stg_bq_project s
         WHERE r.review_id = s.review_id'''
@@ -251,7 +250,6 @@ def load_surrogate_keys():
         query_job.result()
 
         # Loading dim_user table's surrogate keys from staging to dim_review.
-
         load_user_review = '''UPDATE my-dw-project-01.bq_upload.dim_review r SET user_key = s.user_key
         FROM my-dw-project-01.bq_upload.stg_bq_project s
         WHERE r.review_id = s.review_id'''
