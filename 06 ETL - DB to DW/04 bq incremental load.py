@@ -37,9 +37,10 @@ def extract_transform():
         # source_table = source_table.rename(columns={'discounted_price': 'discounted_price_pln'})
         # source_table = source_table.rename(columns={'actual_price': 'actual_price_pln'})
 
-        source_table['created_date'] = datetime.today().date()
-
         source_table = source_table.drop_duplicates()
+
+        # Finally, the data is assigned a created date of 'today' for audit purposes before loading to staging
+        source_table['created_date'] = datetime.today().date()
 
         to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project',
                project_id='my-dw-project-01', if_exists='append')
@@ -200,9 +201,8 @@ def load_surrogate_keys():
         # BigQuery, unlike Postgres requires the source table to have unique records of the
         # column that will be used for comparison with the target table i.e. the source_table cannot
         # contain multiple records of the same id while the target_table has only one with that same id,
-        # which is the case here. The solution employed here (Window Functions) creates a subset of
-        # staging data containing unique review_ids and review_ids with today's creation date for
-        # the comparison.
+        # which is the case here. The solution employed (Window Functions) creates a subset of
+        # staging data containing unique review_ids with today's creation date, for the comparison.
 
         # Loading dim_product table's surrogate keys from staging to dim_review.
         load_prod_review = '''
@@ -240,6 +240,8 @@ def load_surrogate_keys():
 
 # Defining the function that transforms and loads data from staging to the fact table
 # together with all surrogate keys. Note that the fact table does not require MERGE (UPSERT), only INSERT.
+# Therefore, using to_gbq would have been sufficient except the script has been designed to call the loader()
+# function which requests an SQL query and not a dataframe.
 def transform_load_fact_table():
     table_name = 'fact_price'
     table_name_bq = 'my-dw-project-01.bq_upload.fact_price'
