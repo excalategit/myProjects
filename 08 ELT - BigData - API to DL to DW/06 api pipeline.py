@@ -6,68 +6,23 @@ from time import time
 
 client = bigquery.Client()
 
-
-# Loading raw data blobs from GCS bucket to BigQuery staging
-def extract_product():
+# The following functions combine fetching raw data blobs from a GCS bucket, initially loading
+# them to a BigQuery table, then transforming and loading them to another (clean) table, before they are combined
+# into one cleaned staging table.
+def extract_transform_product():
     try:
+        uri = 'gs://my-dw-bucket-02/bq_source_data_04.json'
         destination_table = 'bigdata_api.stg_prod_raw'
 
         job_config = bigquery.LoadJobConfig(
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True
         )
 
-        uri = 'gs://my-dw-bucket-02/bq_source_data_04.json'
-
         load_job = client.load_table_from_uri(uri, destination_table, job_config=job_config)
         load_job.result()
 
         print(f'Loading completed for product data.')
 
-    except Exception as error:
-        print(error)
-
-
-def extract_sales():
-    try:
-        destination_table = 'bigdata_api.stg_sales_raw'
-
-        job_config = bigquery.LoadJobConfig(
-            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True
-        )
-
-        uri = 'gs://my-dw-bucket-02/bq_source_data_05.json'
-
-        load_job = client.load_table_from_uri(uri, destination_table, job_config=job_config)
-        load_job.result()
-
-        print(f'Loading completed for sales data.')
-
-    except Exception as error:
-        print(error)
-
-
-def extract_user():
-    try:
-        destination_table = 'bigdata_api.stg_user_raw'
-
-        job_config = bigquery.LoadJobConfig(
-            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True
-        )
-
-        uri = 'gs://my-dw-bucket-02/bq_source_data_06.json'
-
-        load_job = client.load_table_from_uri(uri, destination_table, job_config=job_config)
-        load_job.result()
-
-        print(f'Loading completed for user data.')
-
-    except Exception as error:
-        print(error)
-
-
-# Transformation of raw product data into its cleaned form
-def transform_product():
-    try:
         dp = read_gbq('bigdata_api.stg_prod_raw', 'my-dw-project-01')
         raw_prod = dp.copy()
 
@@ -75,15 +30,26 @@ def transform_product():
         clean_prod = clean_prod.drop(columns=['rating'])
         to_gbq(clean_prod, 'bigdata_api.stg_prod_clean', project_id='my-dw-project-01', if_exists='fail')
 
-        return print('Product data transformed successfully.')
+        print('Product data transformed successfully.')
 
     except Exception as error:
         print(error)
 
 
-# Transformation of raw sales data into its cleaned form
-def transform_sales():
+def extract_transform_sales():
     try:
+        uri = 'gs://my-dw-bucket-02/bq_source_data_05.json'
+        destination_table = 'bigdata_api.stg_sales_raw'
+
+        job_config = bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True
+        )
+
+        load_job = client.load_table_from_uri(uri, destination_table, job_config=job_config)
+        load_job.result()
+
+        print(f'Loading completed for sales data.')
+
         ds = read_gbq('bigdata_api.stg_sales_raw', 'my-dw-project-01')
         raw_sales = ds.copy()
 
@@ -98,15 +64,26 @@ def transform_sales():
         to_gbq(clean_sales, 'bigdata_api.stg_sales_clean', project_id='my-dw-project-01',
                if_exists='fail')
 
-        return print('Sales data transformed successfully.')
+        print('Sales data transformed successfully.')
 
     except Exception as error:
         print(error)
 
 
-# Transformation of raw user data into its cleaned form
-def transform_user():
+def extract_transform_user():
     try:
+        uri = 'gs://my-dw-bucket-02/bq_source_data_06.json'
+        destination_table = 'bigdata_api.stg_user_raw'
+
+        job_config = bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, autodetect=True
+        )
+
+        load_job = client.load_table_from_uri(uri, destination_table, job_config=job_config)
+        load_job.result()
+
+        print(f'Loading completed for user data.')
+
         du = read_gbq('bigdata_api.stg_user_raw', 'my-dw-project-01')
         raw_user = du.copy()
 
@@ -120,7 +97,7 @@ def transform_user():
         clean_user['lastname'] = clean_user['lastname'].str.capitalize()
         to_gbq(clean_user, 'bigdata_api.stg_user_clean', project_id='my-dw-project-01', if_exists='fail')
 
-        return print('User data transformed successfully.')
+        print('User data transformed successfully.')
 
     except Exception as error:
         print(error)
@@ -167,7 +144,7 @@ def create_combo_staging():
         print(f'Issue with combo staging table creation: {error}')
 
 
-# Creating target tables.
+# Creating the dimension and fact tables
 def create_tables():
     try:
         create_dim_product = '''
@@ -360,11 +337,11 @@ def upload_surrogate_keys():
         update_dim_user = '''
         UPDATE bigdata_api.dim_user AS u SET city_key = j.city_key
         FROM (
-            SELECT * EXCEPT(row_num) FROM(
-                SELECT *, ROW_NUMBER() OVER(PARTITION BY `userId`) AS row_num
+            SELECT * EXCEPT(rank) FROM(
+                SELECT *, RANK() OVER(PARTITION BY `userId`) AS rank
                 FROM bigdata_api.stg_combo_clean_table AS s
                 JOIN bigdata_api.dim_city AS c ON s.city = c.city
-                ) WHERE row_num = 1
+                ) WHERE rank = 1
             ) AS j
         WHERE u.user_id = j.`userId`
         '''
@@ -396,13 +373,9 @@ def load_fact_sale():
         print(f'Issue with loading {table_name}: {error}')
 
 
-extract_product()
-extract_sales()
-extract_user()
-
-transform_product()
-transform_sales()
-transform_user()
+extract_transform_product()
+extract_transform_sales()
+extract_transform_user()
 
 create_combo_staging()
 create_tables()
