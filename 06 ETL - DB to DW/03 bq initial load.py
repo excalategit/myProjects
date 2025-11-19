@@ -38,15 +38,16 @@ def extract_transform():
         # source_table = source_table.rename(columns={'review_title': 'review_content'})
         # source_table = source_table.rename(columns={'discounted_price': 'discounted_price_pln'})
         # source_table = source_table.rename(columns={'actual_price': 'actual_price_pln'})
-        source_table['created_date'] = datetime.today().date()
 
         source_table = source_table.drop_duplicates()
+
+        # Finally, the data is assigned a created date of 'today' for audit purposes before loading to staging
+        source_table['created_date'] = datetime.today().date()
 
         to_gbq(source_table, 'my-dw-project-01.bq_upload.stg_bq_project',
                project_id='my-dw-project-01', if_exists='fail')
 
         # Addition of surrogate key columns to staging.
-
         staging_update = '''ALTER TABLE my-dw-project-01.bq_upload.stg_bq_project
         ADD COLUMN product_key STRING,
         ADD COLUMN user_key STRING
