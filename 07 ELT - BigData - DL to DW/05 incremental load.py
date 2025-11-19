@@ -8,7 +8,8 @@ from time import time
 
 client = bigquery.Client()
 
-# Loading raw data blob from GCS bucket to BigQuery staging
+# Fetching a raw data blob from GCS bucket and loading to BigQuery staging
+# This requires a different syntax from the usual read_sql, read_csv etc.
 uri = 'gs://my-dw-bucket-01/bq_source_data_03'
 destination_table = 'bigdata_load.stg_bq_raw'
 
@@ -28,14 +29,15 @@ inserted_count = after_count - before_count
 print(f'Loaded {inserted_count} rows')
 
 
+# From staging, the raw data is extracted and transformed to a second staging table containing cleaned data
 def extract_transform():
     try:
-        ds = read_gbq('bigdata_load.stg_bq_raw', 'my-dw-project-01')
+        ds = read_gbq('bigdata_load.bq_raw_staging', 'my-dw-project-01')
         source_table = ds.copy()
 
+        # The condition here fetches data with a modified date of 'yesterday' for incremental loading.
         source_table['modified_date'] = pd.to_datetime(source_table['modified_date']).dt.date
         source_table = source_table[source_table['modified_date'] == datetime.today().date() - timedelta(days=1)]
-        # The condition here fetches data with modified date of yesterday for incremental loading.
 
         source_table['user_id'] = source_table['user_id'].astype(str)
         source_table['user_id'] = source_table['user_id'].str.split(',')
@@ -59,6 +61,10 @@ def extract_transform():
         # source_table = source_table.rename(columns={'review_title': 'review_content'})
         # source_table = source_table.rename(columns={'discounted_price': 'discounted_price_pln'})
         # source_table = source_table.rename(columns={'actual_price': 'actual_price_pln'})
+
+        source_table = source_table.drop_duplicates()
+
+        # Finally, the data is assigned a created date of 'today' for audit purposes before loading to staging
         source_table['created_date'] = datetime.today().date()
 
         to_gbq(source_table, 'bigdata_load.stg_bq_clean',
@@ -70,7 +76,7 @@ def extract_transform():
         print(f'Extraction to staging failed: {error}')
 
 
-def insert(insert_query, table_name, table_name_bq, column_name):
+def loader(insert_query, table_name, table_name_bq, column_name):
     try:
         t1 = time()
         query_job = client.query(insert_query)
@@ -114,11 +120,8 @@ def load_dim_product():
         insert_query = """
         MERGE `bigdata_load.dim_product` p
         USING (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY created_date DESC) AS row_num
-                FROM `bigdata_load.stg_bq_clean`
-                WHERE created_date = CURRENT_DATE
-                ) WHERE row_num = 1
+            SELECT * FROM `bigdata_load.stg_bq_clean`
+            WHERE created_date = CURRENT_DATE
             ) AS s
         ON p.product_id = s.product_id
         WHEN MATCHED THEN
@@ -131,11 +134,8 @@ def load_dim_product():
           VALUES (s.product_id, s.product_name, s.category, s.about_product, s.img_link, s.product_link,
           s.rating, s.rating_count)
         """
-        # The window function used here groups staging data by product_id, orders each group by created_date,
-        # and assigns row numbers for each group. Next the top-most product_id of each group is selected.
-        # This ensures that unique and latest incarnations of product_ids are selected ready for merge (upsert).
 
-        insert(insert_query, table_name, table_name_bq, column_name)
+        loader(insert_query, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -150,11 +150,8 @@ def load_dim_user():
         insert_query = """
         MERGE `bigdata_load.dim_user` u
         USING (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY created_date DESC) AS row_num
-                FROM `bigdata_load.stg_bq_clean`
-                WHERE created_date = CURRENT_DATE
-                ) WHERE row_num = 1
+            SELECT * FROM `bigdata_load.stg_bq_clean`
+            WHERE created_date = CURRENT_DATE
             ) AS s
         ON u.user_id = s.user_id
         WHEN MATCHED THEN
@@ -164,7 +161,7 @@ def load_dim_user():
           VALUES (s.user_id, s.user_name)
         """
 
-        insert(insert_query, table_name, table_name_bq, column_name)
+        loader(insert_query, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -179,11 +176,8 @@ def load_dim_review():
         insert_query = """
         MERGE `bigdata_load.dim_review` r
         USING (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
-                FROM `bigdata_load.stg_bq_clean`
-                WHERE created_date = CURRENT_DATE
-                ) WHERE row_num = 1
+            SELECT * FROM `bigdata_load.stg_bq_clean`
+            WHERE created_date = CURRENT_DATE
             ) AS s
         ON r.review_id = s.review_id
         WHEN MATCHED THEN
@@ -193,7 +187,7 @@ def load_dim_review():
           VALUES (s.review_id, s.review_title)
         """
 
-        insert(insert_query, table_name, table_name_bq, column_name)
+        loader(insert_query, table_name, table_name_bq, column_name)
 
     except Exception as error:
         print(f'Potential issue with transformation step: {error}')
@@ -219,21 +213,21 @@ def load_surrogate_keys():
         query_job.result()
 
         # Loading surrogate keys from staging to dim_review.
-        # BigQuery unlike Postgres requires the source table to have unique records based on
-        # the column used for comparison i.e. the source_table cannot contain multiple
-        # rows with the same id while the target_table has one row with that same id, which is the
-        # case here. The solution employed here creates a subset of staging data containing
-        # unique review_ids, again using Window Functions.
+
+        # BigQuery, unlike Postgres requires the source table to have unique records of the
+        # column that will be used for comparison with the target table i.e. the source_table cannot
+        # contain multiple records of the same id while the target_table has only one with that same id,
+        # which is the case here. The solution employed (Window Functions) creates a subset of
+        # staging data containing unique review_ids with today's creation date, for the comparison.
 
         # Loading dim_product table's surrogate keys from staging to dim_review.
-
         load_prod_review = '''
         UPDATE bigdata_load.dim_review r SET product_key = s.product_key
         FROM (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
+            SELECT * EXCEPT(rank) FROM (
+                SELECT *, RANK() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS rank
                 FROM bigdata_load.stg_bq_clean
-                ) WHERE row_num = 1
+                ) WHERE rank = 1
             ) AS s
         WHERE r.review_id = s.review_id
         '''
@@ -241,14 +235,13 @@ def load_surrogate_keys():
         query_job.result()
 
         # Loading dim_user table's surrogate keys from staging to dim_review.
-
         load_user_review = '''
         UPDATE bigdata_load.dim_review AS r SET user_key = s.user_key
         FROM (
-            SELECT * EXCEPT(row_num) FROM (
-                SELECT *, ROW_NUMBER() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS row_num
+            SELECT * EXCEPT(rank) FROM (
+                SELECT *, RANK() OVER (PARTITION BY review_id ORDER BY created_date DESC) AS rank
                 FROM bigdata_load.stg_bq_clean
-                ) WHERE row_num = 1
+                ) WHERE rank = 1
             ) AS s
         WHERE r.review_id = s.review_id
         '''
@@ -280,7 +273,7 @@ def transform_load_fact_table():
             )
         """
 
-        insert(insert_query, table_name, table_name_bq, column_name)
+        loader(insert_query, table_name, table_name_bq, column_name)
         return None
 
     except Exception as error:
@@ -289,11 +282,11 @@ def transform_load_fact_table():
 
 extract_transform()
 
-load_dim_review()
+load_dim_product()
 
 load_dim_user()
 
-load_dim_product()
+load_dim_review()
 
 load_surrogate_keys()
 
